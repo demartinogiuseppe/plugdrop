@@ -233,6 +233,28 @@ class RepoChoiceTests(unittest.TestCase):
         self.assertEqual(pd.clone_dir(home, "me/snaps", None), home / "repos" / "me" / "snaps")
 
 
+class BackendTests(unittest.TestCase):
+    def test_remote_url_rules(self):
+        for url in ("https://gitlab.com/me/snaps.git", "git@codeberg.org:me/snaps.git", "ssh://git@host/x.git"):
+            self.assertEqual(pd.check_remote_url(url + " "), url)
+        for url in ("https://me:token@gitlab.com/me/snaps.git", "C:/repos/snaps", "file:///x", "snaps"):
+            with self.assertRaises(pd.PlugdropError, msg=url):
+                pd.check_remote_url(url)
+
+    def test_git_clone_dir(self):
+        home = Path("/h")
+        self.assertEqual(pd.clone_dir(home, "https://gitlab.com/me/snaps.git", None, url=True),
+                         home / "repos" / "git" / "gitlab.com_me_snaps.git")
+        self.assertEqual(pd.clone_dir(home, "git@codeberg.org:me/s.git", None, url=True),
+                         home / "repos" / "git" / "codeberg.org-me_s.git")
+
+    def test_git_only_for_git_stores(self):
+        self.assertTrue(pd.uses_git({}))
+        self.assertTrue(pd.uses_git({"backend": "git"}))
+        self.assertFalse(pd.uses_git({"backend": "folder"}))
+        self.assertEqual(pd.TOOLS_BY_BACKEND["folder"], ("claude",))
+
+
 class OnlyHereTests(unittest.TestCase):
     def test_lists_what_the_snapshot_lacks(self):
         snapshot = {"plugins": [{"name": "alpha", "marketplace": "m"}], "personal": [{"id": "skill:a"}]}

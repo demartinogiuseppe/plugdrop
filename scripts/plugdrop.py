@@ -264,17 +264,42 @@ def gh_user():
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def requirement_problems():
+BACKENDS = ("github", "git", "folder")
+TOOLS_BY_BACKEND = {"github": ("git", "gh", "claude"), "git": ("git", "claude"), "folder": ("claude",)}
+
+
+def requirement_problems(backend="github"):
     problems = []
     hints = {"git": "Install Git: https://git-scm.com/downloads",
              "gh": "Install GitHub CLI: https://cli.github.com",
              "claude": "The Claude Code CLI ('claude') must be on PATH."}
-    for tool, hint in hints.items():
+    for tool in TOOLS_BY_BACKEND[backend]:
         if not shutil.which(tool):
-            problems.append(f"'{tool}' not found. {hint}")
-    if shutil.which("gh") and run_tool("gh", ["auth", "status"]).returncode != 0:
+            problems.append(f"'{tool}' not found. {hints[tool]}")
+    if backend == "github" and shutil.which("gh") and run_tool("gh", ["auth", "status"]).returncode != 0:
         problems.append("GitHub CLI is not logged in. Run: gh auth login")
     return problems
+
+
+def uses_git(config):
+    """Snapshot stores: a GitHub repo or any git remote (cloned locally), or a plain synced folder."""
+    return config.get("backend", "github") != "folder"
+
+
+def sync_down(config, folder):
+    if uses_git(config):
+        git(["pull", "--ff-only"], folder)
+
+
+def check_remote_url(url):
+    """A git remote for the 'git' backend: credentials must live in git's credential manager, not in the URL."""
+    url = url.strip()
+    if not re.match(r"^(https?://|ssh://|git@)", url):
+        raise PlugdropError("The remote must be an https://, ssh:// or git@ URL.")
+    if strip_credentials(url)[1]:
+        raise PlugdropError("The remote URL contains credentials. Remove them and let git's credential manager "
+                            "or an SSH key handle the login.")
+    return url
 
 
 def load_config():
@@ -297,10 +322,13 @@ def origin_matches(url, full_name):
     return clean.endswith("/" + want) or clean.endswith(":" + want)
 
 
-def clone_dir(home, full_name, config):
-    """Local clone for `full_name`: the configured one if it is the same repo, else repos/<owner>/<name>."""
+def clone_dir(home, full_name, config, url=False):
+    """Local clone for `full_name` (GitHub owner/name, or a git URL when `url`): the configured one if it is the
+    same repo, else repos/<owner>/<name> or repos/git/<host-and-path>."""
     if config and config.get("repo", "").lower() == full_name.lower():
         return Path(config["local_path"]).expanduser()
+    if url:
+        return home / "repos" / "git" / safe_part(re.sub(r"^[a-z]+://|^git@", "", full_name).replace("/", "_"))
     owner, _, name = full_name.partition("/")
     return home / "repos" / safe_part(owner) / safe_part(name)
 
@@ -744,8 +772,8 @@ credentials are never copied.
 """
 
 
-def cmd_check(_args):
-    problems = requirement_problems()
+def cmd_check(args):
+    problems = requirement_problems(args.backend)
     return {"ok": not problems, "problems": problems}
 
 
@@ -758,44 +786,70 @@ def cmd_config(_args):
 
 
 def cmd_setup(args):
-    problems = requirement_problems()
+    """Set up the snapshot store. --backend github: --repo name or owner/name (created private with gh).
+    --backend git: --repo is the URL of an existing repo on any git server. --backend folder: --repo is a folder
+    (for example inside OneDrive or Dropbox) used as is, without git."""
+    backend = args.backend
+    problems = requirement_problems(backend)
     if problems:
         return {"ok": False, "problems": problems}
-    owner = gh_user()
-    full_name = args.repo if "/" in args.repo else f"{owner}/{args.repo}"
     previous = load_config() if config_path().exists() else None
-    local = clone_dir(plugdrop_home(), full_name, previous)
-    actions = []
-    if (local / ".git").exists():
-        origin = run_tool("git", ["-C", str(local), "remote", "get-url", "origin"])
-        if origin.returncode != 0 or not origin_matches(origin.stdout, full_name):
-            return {"ok": False, "error": f"{local} is a clone of {origin.stdout.strip() or 'an unknown repo'}, "
-                                          f"not of {full_name}. plugdrop does not delete or reuse it; "
-                                          "move or remove that folder yourself, then run the setup again."}
-    if previous and previous.get("repo") != full_name:
-        actions.append(f"switch from {previous.get('repo')} to {full_name} "
-                       f"(the old clone stays in {previous.get('local_path')})")
+    same_store = previous and previous.get("backend", "github") == backend
+    actions, warnings = [], []
 
-    view = run_tool("gh", ["repo", "view", full_name, "--json", "visibility", "--jq", ".visibility"])
-    if view.returncode == 0:
-        if view.stdout.strip().upper() != "PRIVATE":
-            return {"ok": False, "error": f"{full_name} exists but is not private. plugdrop only uses private repos."}
-        actions.append(f"use existing private repo {full_name}")
+    if backend == "folder":
+        local = Path(args.repo).expanduser().resolve()
+        repo = str(local)
+        if not local.is_dir() and not local.parent.is_dir():
+            return {"ok": False, "error": f"Neither {local} nor its parent folder exists."}
+        warnings.append("plugdrop cannot check who can read this folder: keep it out of shared or public folders.")
+        actions.append(f"use folder {local}" if local.is_dir() else f"create folder {local}")
+    elif backend == "git":
+        repo = check_remote_url(args.repo)
+        local = clone_dir(plugdrop_home(), repo, previous if same_store else None, url=True)
+        warnings.append("plugdrop cannot check that this repo is private: make sure only you can read it.")
     else:
-        actions.append(f"create private repo {full_name}")
-    if not (local / ".git").exists():
+        repo = args.repo if "/" in args.repo else f"{gh_user()}/{args.repo}"
+        local = clone_dir(plugdrop_home(), repo, previous if same_store else None)
+
+    if backend != "folder" and (local / ".git").exists():
+        origin = run_tool("git", ["-C", str(local), "remote", "get-url", "origin"])
+        matches = origin_matches(origin.stdout, repo) if backend == "github" else \
+            origin.stdout.strip().rstrip("/") == repo.rstrip("/")
+        if origin.returncode != 0 or not matches:
+            return {"ok": False, "error": f"{local} is a clone of {origin.stdout.strip() or 'an unknown repo'}, "
+                                          f"not of {repo}. plugdrop does not delete or reuse it; "
+                                          "move or remove that folder yourself, then run the setup again."}
+    if previous and previous.get("repo") != repo:
+        actions.append(f"switch from {previous.get('repo')} to {repo} "
+                       f"(the old copy stays in {previous.get('local_path')})")
+
+    view = None
+    if backend == "github":
+        view = run_tool("gh", ["repo", "view", repo, "--json", "visibility", "--jq", ".visibility"])
+        if view.returncode == 0:
+            if view.stdout.strip().upper() != "PRIVATE":
+                return {"ok": False, "error": f"{repo} exists but is not private. plugdrop only uses private repos."}
+            actions.append(f"use existing private repo {repo}")
+        else:
+            actions.append(f"create private repo {repo}")
+    if backend != "folder" and not (local / ".git").exists():
         actions.append(f"clone into {local}")
     actions.append("add README.md, categories.json, snapshots/ if missing")
     actions.append(f"save {config_path()}")
     if args.dry_run:
-        return {"ok": True, "dry_run": True, "actions": actions}
+        return {"ok": True, "dry_run": True, "actions": actions, "warnings": warnings}
 
-    if view.returncode != 0:
-        _check(run_tool("gh", ["repo", "create", full_name, "--private",
+    if view is not None and view.returncode != 0:
+        _check(run_tool("gh", ["repo", "create", repo, "--private",
                                "--description", "Claude Code plugin snapshots (plugdrop)"]))
-    if not (local / ".git").exists():
+    if backend != "folder" and not (local / ".git").exists():
         local.parent.mkdir(parents=True, exist_ok=True)
-        _check(run_tool("gh", ["repo", "clone", full_name, str(local)]))
+        if backend == "github":
+            _check(run_tool("gh", ["repo", "clone", repo, str(local)]))
+        else:
+            _check(run_tool("git", ["clone", repo, str(local)], timeout=1800))
+    local.mkdir(exist_ok=True)
 
     created = []
     for rel, content in (("README.md", SNAPSHOT_REPO_README), ("categories.json", "{}\n"),
@@ -805,15 +859,16 @@ def cmd_setup(args):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             created.append(rel)
-    if created:
+    if created and backend != "folder":
         git(["add", *created], local)
         git(["commit", "-m", "plugdrop: initialize snapshot repo"], local)
         git(["push", "-u", "origin", "HEAD"], local)
 
-    config = {"author": args.author, "machine": args.machine, "repo": full_name, "local_path": str(local)}
+    config = {"backend": backend, "author": args.author, "machine": args.machine, "repo": repo,
+              "local_path": str(local)}
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    return {"ok": True, "actions": actions, "config": config}
+    return {"ok": True, "actions": actions, "warnings": warnings, "config": config}
 
 
 def _current_entries():
@@ -831,7 +886,7 @@ def _personal_summary(items):
 def cmd_export_preview(_args):
     config = load_config()
     folder = repo_dir(config)
-    git(["pull", "--ff-only"], folder)
+    sync_down(config, folder)
     entries, warnings = _current_entries()
     personal, _, personal_warnings = scan_personal(claude_home(), git_origin)
     categories = read_categories(folder)
@@ -852,7 +907,7 @@ def cmd_export(args):
     config = load_config()
     folder = repo_dir(config)
     if not args.dry_run:
-        git(["pull", "--ff-only"], folder)
+        sync_down(config, folder)
     entries, warnings = _current_entries()
     personal, blobs, personal_warnings = scan_personal(claude_home(), git_origin)
     warnings += personal_warnings
@@ -881,10 +936,13 @@ def cmd_export(args):
         to_add.append("categories.json")
     name = write_snapshot(folder / "snapshots", snapshot, now, config["machine"], config["author"])
     to_add.append(f"snapshots/{name}")
-    git(["add", *to_add], folder)
-    git(["commit", "-m", f"plugdrop: export {config['machine']} {now:%Y-%m-%d}"], folder)
     result = {"ok": True, "snapshot": f"snapshots/{name}", "counts": counts, "personal_counts": personal_counts,
               "warnings": warnings, "repo": config["repo"]}
+    if not uses_git(config):
+        result["saved_to"] = str(folder)
+        return result
+    git(["add", *to_add], folder)
+    git(["commit", "-m", f"plugdrop: export {config['machine']} {now:%Y-%m-%d}"], folder)
     try:
         git(["push"], folder)
         result["pushed"] = True
@@ -895,8 +953,9 @@ def cmd_export(args):
 
 
 def cmd_snapshots(_args):
-    folder = repo_dir(load_config())
-    git(["pull", "--ff-only"], folder)
+    config = load_config()
+    folder = repo_dir(config)
+    sync_down(config, folder)
     snapshots, warnings = list_snapshots(folder)
     return {"ok": True, "snapshots": snapshots, "warnings": warnings}
 
@@ -920,8 +979,9 @@ def _plan(folder, snapshot_name):
 
 
 def cmd_import_plan(args):
-    folder = repo_dir(load_config())
-    git(["pull", "--ff-only"], folder)
+    config = load_config()
+    folder = repo_dir(config)
+    sync_down(config, folder)
     snapshot, plan, _ = _plan(folder, args.snapshot)
     todo = [i for i in plan if i["status"] in (TO_INSTALL, TO_MERGE)]
     items = [{k: v for k, v in i.items() if k != "files"} for i in plan]
@@ -979,13 +1039,17 @@ def cmd_import(args):
 def build_parser():
     parser = argparse.ArgumentParser(prog="plugdrop", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check", help="verify git, gh, gh login and claude").set_defaults(func=cmd_check)
+    p = sub.add_parser("check", help="verify the tools needed by a backend")
+    p.add_argument("--backend", choices=BACKENDS, default="github")
+    p.set_defaults(func=cmd_check)
     sub.add_parser("config", help="show config, or defaults if not set up").set_defaults(func=cmd_config)
 
     p = sub.add_parser("setup", help="first-run setup")
     p.add_argument("--author", required=True)
     p.add_argument("--machine", required=True)
-    p.add_argument("--repo", default="plugdrop-snapshots")
+    p.add_argument("--backend", choices=BACKENDS, default="github")
+    p.add_argument("--repo", default="plugdrop-snapshots",
+                   help="github: name or owner/name; git: remote URL; folder: folder path")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_setup)
 
