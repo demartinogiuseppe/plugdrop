@@ -1,7 +1,7 @@
 # plugdrop
 
-A plugin for Claude Code that moves your **setup** between machines: your plugins and your personal skills,
-commands and agents.
+A plugin for Claude Code that moves your **setup** between machines: your plugins, your personal skills,
+commands and agents, and your personal `CLAUDE.md`.
 
 - **Export** saves what is on this machine as a new snapshot in a private GitHub repo that plugdrop creates for
   you (`plugdrop-snapshots`).
@@ -30,8 +30,20 @@ again from its original source through the official `claude plugin` CLI.
   tokens such as `ghp_…`, `sk-…`, `AKIA…`), is larger than 1 MB, or the item is larger than 10 MB, or contains a
   link. Export lists every item left out and why.
 
-Not saved, ever: plugin files, plugin settings or data, MCP server configs, `settings.json`, `CLAUDE.md`,
-credentials or tokens (credentials found in source URLs are removed and reported).
+**Your personal `CLAUDE.md`** (`~/.claude/CLAUDE.md`, the instructions Claude reads in every session) is copied
+too, with the same secret check. On import:
+- if the new machine has none, it is created as it is;
+- if it has one with different content, plugdrop never replaces it. It splits both files into blocks (a heading
+  and what follows it, or a paragraph) and shows the blocks of the snapshot that are missing here. You choose which
+  to add; they are **appended at the end**, under a comment such as
+  `<!-- plugdrop: added on 2026-10-09 from PC-HOME -->`, after a backup copy
+  (`CLAUDE.md.plugdrop-backup-<date>`). No existing line is changed or removed. The comment is an HTML comment:
+  Claude does not treat it as an instruction, and it lets a later import recognize what was already added.
+- plugdrop warns when a block mentions a plugin or skill that is not installed here, a path of the source machine,
+  or an `@` file it does not carry.
+
+Not saved, ever: plugin files, plugin settings or data, MCP server configs, `settings.json`, project `CLAUDE.md`
+files, credentials or tokens (credentials found in source URLs are removed and reported).
 
 Consequences:
 - The marketplace may ship a newer version than the one in the snapshot; the import report flags it.
@@ -69,8 +81,11 @@ Each command first asks: **guided or direct?** Add `--direct` to skip the questi
 
 - **Guided**: summary, categories and a note on export; snapshot choice, selection (all, one kind, one category,
   item by item, none) and a confirmation on import.
-- **Direct**: no questions. Export keeps the existing categories and writes an automatic note. Import takes the most
-  recent snapshot and installs everything missing without asking.
+- **Direct**: export asks nothing, keeps the existing categories and writes an automatic note. Import takes the most
+  recent snapshot and asks a single question, what to import (everything missing, only plugins, only skills, only
+  commands, only agents, only `CLAUDE.md`), then proceeds without a confirmation.
+
+You always choose what is imported: nothing is installed or merged unless you picked it.
 
 Both commands accept `--dry-run`: they show what would happen and change nothing.
 
@@ -127,6 +142,8 @@ If you already keep your settings in dotfiles, that is faster than plugdrop. plu
 - Never uninstalls or disables a plugin. A plugin that was disabled on the source machine is reported, not changed.
 - Never overwrites a skill, command or agent: it only creates the missing ones (each skill is built in a temporary
   folder and moved into place in one step).
+- Never replaces your `CLAUDE.md`: it only appends the blocks you choose, after a backup copy, keeping your line
+  endings. Backups are never overwritten either.
 - Never reads `.credentials.json`, `~/.claude.json` or other credential files, and never edits `settings.json`:
   plugin installs go through `claude plugin install` only.
 - Never copies a skill, command or agent that looks like it contains a secret.
@@ -146,7 +163,7 @@ not every password written in plain text. Do not keep secrets inside skills.
 - MCP servers you added yourself (`claude mcp add`) are deliberately left out, and every export and import says
   so: their configuration often holds private keys, and it lives in a file plugdrop does not read. MCP servers that
   come with a plugin are reinstalled together with the plugin.
-- Also out of scope: hooks, settings and `CLAUDE.md`.
+- Also out of scope: hooks, settings and project `CLAUDE.md` files.
 - No uninstall, no background sync.
 - Plugins whose install needs an interactive confirmation (marketplace-declared commands) fail with a clear error;
   install them by hand with `/plugin`.

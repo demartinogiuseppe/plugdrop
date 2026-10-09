@@ -9,7 +9,7 @@
     {
       "name": "plugdrop",
       "source": "./",
-      "description": "Save your Claude Code plugins and personal skills, commands and agents to a private GitHub repo and selectively reinstall them on another machine."
+      "description": "Save your Claude Code plugins, personal skills, commands, agents and CLAUDE.md to a private GitHub repo and selectively reinstall them on another machine."
     }
   ]
 }

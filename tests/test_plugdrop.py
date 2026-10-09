@@ -377,5 +377,88 @@ class PersonalRoundTripTests(unittest.TestCase):
         self.assertFalse((self.dest / "commands" / "hello.md").exists())
 
 
+SNAPSHOT_CLAUDE_MD = """At the start of every session load the skill `example-plugin:example-guidelines`.
+
+
+# notes-graph
+- **notes-graph** (`~/.claude/skills/notes-graph/SKILL.md`) - any input to knowledge graph.
+When the user types `/notes-graph`, invoke the Skill tool.
+
+# paths
+Notes live in G:/Projects/Notes. See @~/.claude/rules.md
+```bash
+# not a heading inside a fence
+```
+"""
+LOCAL_CLAUDE_MD = "Always answer in Italian.\r\n\r\nAt the start of every session load the skill " \
+                  "`example-plugin:example-guidelines`.\r\n"
+
+
+class ClaudeMdTests(unittest.TestCase):
+    WHEN = dt.datetime(2026, 10, 9, 17, 0)
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.source, self.dest, self.repo = root / "a", root / "b", root / "repo"
+        self.source.mkdir()
+        self.dest.mkdir()
+        (self.source / "CLAUDE.md").write_text(SNAPSHOT_CLAUDE_MD, encoding="utf-8")
+        self.items, blobs, _ = pd.scan_personal(self.source, fake_origin)
+        pd.store_blobs(self.repo, blobs)
+        self.item = next(i for i in self.items if i["kind"] == "claude-md")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def plan(self):
+        return pd.plan_personal([self.item], self.dest, self.repo)[0]
+
+    def test_split_blocks(self):
+        blocks = pd.split_blocks(SNAPSHOT_CLAUDE_MD)
+        self.assertEqual([b.split("\n")[0][:13] for b in blocks], ["At the start ", "# notes-graph", "# paths"])
+        self.assertIn("# not a heading", blocks[2])
+
+    def test_missing_creates_identical_file(self):
+        self.assertEqual(self.plan()["status"], "to-install")
+        report = pd.install_personal([self.plan()], self.dest, self.repo, clone=None)
+        self.assertEqual(report[0]["result"], "installed")
+        self.assertEqual((self.dest / "CLAUDE.md").read_text(encoding="utf-8"), SNAPSHOT_CLAUDE_MD)
+
+    def test_merge_appends_only_missing_blocks_with_backup(self):
+        (self.dest / "CLAUDE.md").write_bytes(LOCAL_CLAUDE_MD.encode("utf-8"))
+        plan = self.plan()
+        self.assertEqual((plan["status"], plan["already_present"], plan["local_only"]), ("to-merge", 1, 1))
+        self.assertEqual([b["title"] for b in plan["blocks"]], ["# notes-graph", "# paths"])
+        report = pd.install_personal([plan], self.dest, self.repo, clone=None, machine="PC HOME", when=self.WHEN)
+        self.assertEqual((report[0]["result"], report[0]["added_blocks"]), ("merged", ["# notes-graph", "# paths"]))
+        merged = (self.dest / "CLAUDE.md").read_bytes().decode("utf-8")
+        self.assertTrue(merged.startswith(LOCAL_CLAUDE_MD))
+        self.assertIn("<!-- plugdrop: added on 2026-10-09 from PC-HOME -->", merged)
+        self.assertNotIn("\n", merged.replace("\r\n", ""))  # kept Windows line endings
+        backup = self.dest / "CLAUDE.md.plugdrop-backup-2026-10-09"
+        self.assertEqual(backup.read_bytes().decode("utf-8"), LOCAL_CLAUDE_MD)
+        # A second import finds nothing missing and changes nothing.
+        self.assertEqual(self.plan()["status"], "installed")
+
+    def test_merge_only_chosen_blocks_and_backups_never_overwritten(self):
+        (self.dest / "CLAUDE.md").write_text("Mine.\n", encoding="utf-8")
+        (self.dest / "CLAUDE.md.plugdrop-backup-2026-10-09").write_text("older\n", encoding="utf-8")
+        report = pd.install_personal([self.plan()], self.dest, self.repo, clone=None, machine="m",
+                                     when=self.WHEN, blocks={2})
+        self.assertEqual(report[0]["added_blocks"], ["# notes-graph"])
+        self.assertTrue(report[0]["backup"].endswith("plugdrop-backup-2026-10-09-2"))
+        self.assertEqual((self.dest / "CLAUDE.md.plugdrop-backup-2026-10-09").read_text(encoding="utf-8"), "older\n")
+        self.assertNotIn("# paths", (self.dest / "CLAUDE.md").read_text(encoding="utf-8"))
+
+    def test_block_notes(self):
+        blocks = pd.split_blocks(SNAPSHOT_CLAUDE_MD)
+        names = {"example-plugin", "notes-graph", "review"}
+        self.assertEqual(pd.block_notes(blocks[0], names)["mentions"], ["example-plugin"])
+        self.assertEqual(pd.block_notes(blocks[1], names)["mentions"], ["notes-graph"])
+        notes = pd.block_notes(blocks[2], names)
+        self.assertEqual((notes["machine_paths"], notes["imports"]), (["G:/Projects/Notes."], ["~/.claude/rules.md"]))
+
+
 if __name__ == "__main__":
     unittest.main()
