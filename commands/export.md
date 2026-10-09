@@ -31,6 +31,8 @@ Export saves the **list** of plugins (name, marketplace, source, version), never
    current assignments as a table (one row per category and its plugins) inside the question itself, for example
    in the "Keep" option's preview. "Keep" is the first option. On "Review", propose a new grouping for all plugins
    exactly as for "Yes, suggest them" above, and pass every changed assignment with `--category`.
+   Ask every question of steps 3 and 4 on its own: never put the category approval and the note in the same
+   prompt (combined with a preview, the user may be unable to answer either).
 4. Ask for a **note** for this snapshot. It is required: if the user gives an empty answer, ask again.
 5. Run `export --note "<note>"`, adding one `--category "<plugin@marketplace>=<category>"` per assigned category.
    Escape any double quotes inside the note.
