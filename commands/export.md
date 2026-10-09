@@ -58,3 +58,4 @@ one line per item of `warnings`, the counts by `portability` and `personal_count
    Escape any double quotes inside the note.
 6. Report: the snapshot file name, the counts, and the repo. If `pushed` is false, show `push_error` and `hint`.
    In dry-run, say clearly that nothing was written or pushed.
+   End with the "MCP notice" of the shared instructions (also in direct mode).

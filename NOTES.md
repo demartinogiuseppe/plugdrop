@@ -111,7 +111,7 @@ Scoperte concrete che estendono la "pulizia di sicurezza" del brief:
 - Altri file → blob `files/<sha[:2]>/<sha>` nel repo snapshot (deduplicati). Esclusi `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`. Sulla macchina di test: 66 elementi, 274 file.
 - Item escluso per intero (salvato solo il nome) se: nome file da credenziale, token riconoscibile (`ghp_`, `github_pat_`, `sk-`, `xox?-`, `AKIA`, `AIza`, chiave privata PEM), file > 1 MB, item > 10 MB, link simbolico. Token con `EXAMPLE` ignorati: una skill reale citava la chiave d'esempio AWS `AKIAIOSFODNN7EXAMPLE` (falso positivo trovato nel test reale).
 - Import: crea solo ciò che manca. Esiste uguale → `installed`; esiste diverso → `different`, mai toccato. Le skill vengono costruite in una cartella di staging e rinominate in un colpo solo. Nomi e percorsi dallo snapshot validati (niente `..`, `\`, `:`), hash verificati prima di scrivere.
-- MCP (punto 2) **rimandato**: la CLI (`claude mcp list/get`) non ha uscita JSON, avvia ogni server e unisce gli argomenti con spazi; l'unica fonte affidabile è `~/.claude.json`, vietato dal brief. Verificato invece che `${VAR}` nella config utente viene espanso dalle variabili d'ambiente.
+- MCP (punto 2) **escluso per scelta dell'utente (2026-10-09)**, con un avviso alla fine di ogni export e import (sezione "MCP notice" di `scripts/shared-instructions.md`). Motivi: la CLI (`claude mcp list/get`) non ha uscita JSON, avvia ogni server e unisce gli argomenti con spazi; l'unica fonte affidabile è `~/.claude.json`, vietato dal brief. Verificato invece che `${VAR}` nella config utente viene espanso dalle variabili d'ambiente.
 
 ## 5. Parte legale ("legal safe")
 

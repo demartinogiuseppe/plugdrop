@@ -136,7 +136,10 @@ not every password written in plain text. Do not keep secrets inside skills.
 
 ## Limits
 
-- Out of scope: MCP servers, hooks, settings and `CLAUDE.md`.
+- MCP servers you added yourself (`claude mcp add`) are deliberately left out, and every export and import says
+  so: their configuration often holds private keys, and it lives in a file plugdrop does not read. MCP servers that
+  come with a plugin are reinstalled together with the plugin.
+- Also out of scope: hooks, settings and `CLAUDE.md`.
 - No uninstall, no background sync.
 - Plugins whose install needs an interactive confirmation (marketplace-declared commands) fail with a clear error;
   install them by hand with `/plugin`.
