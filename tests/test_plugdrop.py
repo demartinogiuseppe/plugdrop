@@ -218,5 +218,141 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(sum(1 for r in report if r["add_marketplace"]), 2)
 
 
+def make_home(root):
+    """A fake Claude config dir with every kind of personal item."""
+    home = Path(root) / "claude"
+    (home / "skills" / "notes" / "scripts").mkdir(parents=True)
+    (home / "skills" / "notes" / "SKILL.md").write_text("# notes\n", encoding="utf-8")
+    (home / "skills" / "notes" / "scripts" / "run.py").write_text("print(1)\n", encoding="utf-8")
+    (home / "skills" / "notes" / "node_modules").mkdir()
+    (home / "skills" / "notes" / "node_modules" / "big.js").write_text("x", encoding="utf-8")
+    (home / "skills" / "leaky").mkdir()
+    (home / "skills" / "leaky" / "SKILL.md").write_text("key: ghp_" + "a1" * 20 + "\n", encoding="utf-8")
+    (home / "skills" / "cloned" / ".git").mkdir(parents=True)
+    (home / "skills" / "cloned" / "SKILL.md").write_text("# cloned\n", encoding="utf-8")
+    (home / "skills" / "not-a-skill").mkdir()
+    (home / "skills" / ".trash" / "old").mkdir(parents=True)
+    (home / "commands" / "team").mkdir(parents=True)
+    (home / "commands" / "hello.md").write_text("Say hello\n", encoding="utf-8")
+    (home / "commands" / "team" / "sync.md").write_text("Sync\n", encoding="utf-8")
+    (home / "agents").mkdir()
+    (home / "agents" / "reviewer.md").write_text("Review\n", encoding="utf-8")
+    return home
+
+
+def fake_origin(path):
+    return {"url": "https://user:pw@github.com/o/cloned.git", "commit": "abc", "dirty": True}
+
+
+class PersonalScanTests(unittest.TestCase):
+    def scan(self, tmp):
+        return pd.scan_personal(make_home(tmp), fake_origin)
+
+    def test_finds_items_and_skips_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            items, _, _ = self.scan(tmp)
+            by_id = {i["id"]: i for i in items}
+            self.assertEqual(set(by_id), {"skill:notes", "skill:leaky", "skill:cloned", "command:hello",
+                                          "command:team/sync", "agent:reviewer"})
+            self.assertEqual([f["path"] for f in by_id["skill:notes"]["files"]], ["SKILL.md", "scripts/run.py"])
+
+    def test_secret_excludes_whole_item(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            items, blobs, warnings = self.scan(tmp)
+            leaky = next(i for i in items if i["id"] == "skill:leaky")
+            self.assertEqual(leaky["source"], "excluded")
+            self.assertNotIn("files", leaky)
+            self.assertFalse(any("leaky" in str(p) for p in blobs.values()))
+            self.assertTrue(any("skill:leaky" in w for w in warnings))
+
+    def test_git_skill_is_a_reference_without_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            items, _, warnings = self.scan(tmp)
+            cloned = next(i for i in items if i["id"] == "skill:cloned")
+            self.assertEqual((cloned["source"], cloned["url"]), ("git", "https://github.com/o/cloned.git"))
+            self.assertTrue(any("credentials" in w for w in warnings))
+            self.assertTrue(any("local changes" in w for w in warnings))
+
+    def test_secret_detection(self):
+        self.assertTrue(pd.looks_secret(".env", b"A=1"))
+        self.assertTrue(pd.looks_secret("x.md", b"-----BEGIN RSA PRIVATE KEY-----"))
+        self.assertTrue(pd.looks_secret("x.md", b"token sk-ant-api03-abcdefghij1234567890"))
+        self.assertFalse(pd.looks_secret("x.md", b"use the task-management-and-planning-workflow"))
+        self.assertFalse(pd.looks_secret("SKILL.md", b"# plain skill"))
+        self.assertFalse(pd.looks_secret("x.md", b"aws example AKIAIOSFODNN7EXAMPLE"))
+
+
+class PersonalRoundTripTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self.tmp.name) / "repo"
+        self.source = make_home(self.tmp.name)
+        self.items, blobs, _ = pd.scan_personal(self.source, fake_origin)
+        self.added = pd.store_blobs(self.repo, blobs)
+        self.dest = Path(self.tmp.name) / "other-machine"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def statuses(self):
+        return {i["id"]: i["status"] for i in pd.plan_personal(self.items, self.dest)}
+
+    def test_blobs_stored_once(self):
+        self.assertEqual(len(self.added), 5)
+        self.assertEqual(pd.store_blobs(self.repo, pd.scan_personal(self.source, fake_origin)[1]), [])
+
+    def test_install_then_everything_is_installed(self):
+        self.assertEqual(set(self.statuses().values()), {"to-install", "not-portable"})
+        plan = pd.plan_personal(self.items, self.dest)
+        clones = []
+
+        def clone(url, target):
+            clones.append(url)
+            (target / ".git").mkdir(parents=True)
+
+        report = pd.install_personal(pd.select(plan, "all"), self.dest, self.repo, clone)
+        self.assertEqual({r["result"] for r in report}, {"installed"})
+        self.assertEqual(clones, ["https://github.com/o/cloned.git"])
+        self.assertEqual((self.dest / "skills" / "notes" / "scripts" / "run.py").read_text(encoding="utf-8"),
+                         "print(1)\n")
+        self.assertTrue((self.dest / "commands" / "team" / "sync.md").is_file())
+        self.assertFalse(list((self.dest / "skills").glob(".plugdrop-staging-*")))
+        self.assertEqual(set(self.statuses().values()), {"installed", "not-portable"})
+
+    def test_existing_different_item_is_never_overwritten(self):
+        (self.dest / "agents").mkdir(parents=True)
+        (self.dest / "agents" / "reviewer.md").write_text("mine\n", encoding="utf-8")
+        self.assertEqual(self.statuses()["agent:reviewer"], "different")
+        item = next(i for i in self.items if i["id"] == "agent:reviewer")
+        report = pd.install_personal([item], self.dest, self.repo, clone=None)
+        self.assertEqual(report[0]["result"], "failed")
+        self.assertEqual((self.dest / "agents" / "reviewer.md").read_text(encoding="utf-8"), "mine\n")
+
+    def test_dry_run_writes_nothing(self):
+        plan = pd.plan_personal(self.items, self.dest)
+        report = pd.install_personal(pd.select(plan, "all"), self.dest, self.repo, clone=None, dry_run=True)
+        self.assertEqual({r["result"] for r in report}, {"would-install"})
+        self.assertFalse(self.dest.exists())
+
+    def test_unsafe_names_rejected(self):
+        for item in ({"kind": "skill", "name": "../evil"}, {"kind": "skill", "name": "a/b"},
+                     {"kind": "command", "name": "..\\x"}, {"kind": "agent", "name": "C:/x"},
+                     {"kind": "plugin", "name": "x"}):
+            with self.assertRaises(pd.PlugdropError, msg=str(item)):
+                pd.target_path(self.dest, item)
+        bad_file = {"id": "skill:ok", "kind": "skill", "name": "ok", "source": "files",
+                    "files": [{"path": "../../x", "sha256": "0" * 64}]}
+        report = pd.install_personal([bad_file], self.dest, self.repo, clone=None)
+        self.assertEqual(report[0]["result"], "failed")
+        self.assertFalse((Path(self.tmp.name) / "x").exists())
+
+    def test_corrupted_blob_rejected(self):
+        item = next(i for i in self.items if i["id"] == "command:hello")
+        pd.blob_path(self.repo, item["files"][0]["sha256"]).write_bytes(b"tampered")
+        report = pd.install_personal([item], self.dest, self.repo, clone=None)
+        self.assertIn("corrupted", report[0]["error"])
+        self.assertFalse((self.dest / "commands" / "hello.md").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
