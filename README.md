@@ -58,7 +58,7 @@ private repo if needed, clones it into `~/.plugdrop/repo/` and saves `~/.plugdro
 ### Categories
 
 `categories.json` at the root of your snapshot repo maps `plugin@marketplace` to a category, for example
-`{"superpowers@claude-plugins-official": "method"}`. During export Claude offers to fill in missing ones. You can
+`{"superpowers@claude-plugins-official": "method"}`. During export Claude offers to fill in missing ones, or to review the current ones when none is missing. You can
 edit the file by hand at any time. Import can install a single category.
 
 ### Plugin classes
