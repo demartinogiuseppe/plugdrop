@@ -49,8 +49,17 @@ Restart Claude Code afterwards.
 
 | Command | What it does |
 |---|---|
-| `/plugdrop:export` | Save your plugin list as a new snapshot. `--dry-run` shows what would be saved without writing anything. |
-| `/plugdrop:import` | Install plugins from a snapshot, choosing which ones. `--dry-run` stops after showing the plan. |
+| `/plugdrop:export` | Save your plugin list as a new snapshot. |
+| `/plugdrop:import` | Install plugins from a snapshot. |
+
+Each command first asks: **guided or direct?** Add `--direct` to skip the question.
+
+- **Guided**: summary, categories and a note on export; snapshot choice, selection (all, one category, item by
+  item, none) and a confirmation on import.
+- **Direct**: no questions. Export keeps the existing categories and writes an automatic note. Import takes the most
+  recent snapshot and installs every missing plugin without asking.
+
+Both commands accept `--dry-run`: they show what would happen and change nothing.
 
 On first run plugdrop checks `git`, `gh` and your GitHub login, asks for author, machine and repo name, creates the
 private repo if needed, clones it into `~/.plugdrop/repo/` and saves `~/.plugdrop/config.json`.
@@ -68,6 +77,25 @@ edit the file by hand at any time. Import can install a single category.
 | `portable` | marketplace from GitHub, a git URL or a web URL | can be installed |
 | `local` | marketplace from a folder or file on the source machine | shown as not portable |
 | `non-user-scope` | project, local, session (`--plugin-dir`) or claude.ai-synced plugins | shown as info only |
+
+## When you don't need plugdrop
+
+Claude Code can already rebuild your plugins on a new machine by itself:
+
+- **Copy `~/.claude/settings.json`** (for example through a dotfiles repo). Its `enabledPlugins` and
+  `extraKnownMarketplaces` keys list your plugins and marketplaces; on a machine where they are missing, Claude Code
+  clones the marketplaces and downloads the enabled plugins on its own. See the
+  [plugin loading reference](https://code.claude.com/docs/en/plugins/loading).
+- **Plugins turned on in your claude.ai account** sync to Claude Code automatically (they appear as `name@synced`).
+- Third-party tools sync your whole `~/.claude` configuration, not just plugins.
+
+If you already keep your settings in dotfiles, that is faster than plugdrop. plugdrop is for when you want:
+
+- to **choose** what to install (a category, a few plugins) instead of all or nothing;
+- to move **only the plugin list**, without the rest of `settings.json` (permissions, hooks, environment variables,
+  sometimes tokens), which is often machine-specific or sensitive;
+- a **history** of snapshots with date, machine, author and note;
+- all this **without managing a git repo of your own**.
 
 ## Rules plugdrop follows
 
