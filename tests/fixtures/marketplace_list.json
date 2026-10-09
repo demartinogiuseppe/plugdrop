@@ -1,0 +1,20 @@
+[
+  {
+    "name": "gh-market",
+    "source": "github",
+    "repo": "example-owner/gh-market",
+    "installLocation": "C:\\Users\\someone\\.claude\\plugins\\marketplaces\\gh-market"
+  },
+  {
+    "name": "git-market",
+    "source": "git",
+    "url": "https://someone:FAKE-TOKEN@git.example.com/team/market.git",
+    "installLocation": "/home/someone/.claude/plugins/marketplaces/git-market"
+  },
+  {
+    "name": "local-market",
+    "source": "directory",
+    "path": "D:\\work\\local-market",
+    "installLocation": "D:\\work\\local-market"
+  }
+]
