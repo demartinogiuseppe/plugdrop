@@ -3,8 +3,8 @@
 A plugin for Claude Code that moves your **setup** between machines: your plugins, your personal skills,
 commands and agents, and your personal `CLAUDE.md`.
 
-- **Export** saves what is on this machine as a new snapshot in a private GitHub repo that plugdrop creates for
-  you (`plugdrop-snapshots`).
+- **Export** saves what is on this machine as a new snapshot: in a private GitHub repo that plugdrop creates for
+  you (`plugdrop-snapshots`), in a repo on another git server, or in a synced folder (OneDrive, Dropbox...).
 - **Import** shows a snapshot next to what is here and lets you install everything that is missing, one kind
   (only skills, only plugins...), one category, a hand-picked set, or nothing.
 
@@ -12,7 +12,9 @@ Every export is a new snapshot with author, date, machine and a note. Snapshots 
 never overwrites anything you already have.
 
 > plugdrop is an independent project. It is not affiliated with, endorsed or sponsored by Anthropic, PBC.
-> Claude and Claude Code are trademarks of Anthropic, PBC.
+> Claude and Claude Code are trademarks of Anthropic, PBC. GitHub, GitLab, Gitea, OneDrive, Dropbox and Google
+> Drive are trademarks of their respective owners and are named only to describe where you can keep your
+> snapshots; plugdrop is not affiliated with any of them.
 
 ## What is saved (and what is not)
 
@@ -55,7 +57,10 @@ Consequences:
 
 - Claude Code with the `claude` CLI on PATH
 - Python 3.8+ (standard library only). On Windows `python` or `py` works; the `python3` Microsoft Store alias is not used.
-- Git and the GitHub CLI `gh`, logged in (`gh auth login`)
+- Depending on where you keep the snapshots:
+  - GitHub (recommended): Git and the GitHub CLI `gh`, logged in (`gh auth login`)
+  - another git server (GitLab, Gitea, your own): Git, and a repo you created there
+  - a synced folder (OneDrive, Dropbox, Google Drive, a network share): nothing else
 
 Works on Windows (cmd and Windows Terminal), macOS and Linux.
 
@@ -92,8 +97,18 @@ Both commands accept `--dry-run`: they show what would happen and change nothing
 `/plugdrop:import --diff` only compares: what is in a snapshot but missing here, what is here but not in the
 snapshot, and what has the same name but different content. It installs nothing.
 
-On first run plugdrop checks `git`, `gh` and your GitHub login, asks for author, machine and repo name, creates the
-private repo if needed, clones it into `~/.plugdrop/repos/<owner>/<name>/` and saves `~/.plugdrop/config.json`.
+On first run plugdrop asks where to keep the snapshots, checks the tools that choice needs, asks for author and
+machine name, and saves `~/.plugdrop/config.json`:
+
+| Store | What plugdrop does | Private? |
+|---|---|---|
+| GitHub | creates the private repo if needed and clones it into `~/.plugdrop/repos/<owner>/<name>/` | checked: a public repo is refused |
+| another git server | clones the repo URL you give into `~/.plugdrop/repos/git/...` | your responsibility |
+| synced folder | writes straight into the folder you give, no git | your responsibility |
+
+With a synced folder, use the same folder on every machine and let the sync finish before importing. Snapshots
+still get a new file each time and are never overwritten. A git URL must not contain a password: let git's
+credential manager or an SSH key handle the login.
 
 To use another snapshot repo later, add `--repo <name>` (or `--repo owner/name`) to either command. plugdrop
 clones the new repo next to the old one and switches to it; the old clone is kept. If a local clone turns out to
@@ -134,7 +149,7 @@ If you already keep your settings in dotfiles, that is faster than plugdrop. plu
 - to move **only the plugin list**, without the rest of `settings.json` (permissions, hooks, environment variables,
   sometimes tokens), which is often machine-specific or sensitive;
 - a **history** of snapshots with date, machine, author and note;
-- all this **without managing a git repo of your own**.
+- all this **without managing a git repo of your own** (or without git at all, with a synced folder).
 
 ## Rules plugdrop follows
 
@@ -147,16 +162,33 @@ If you already keep your settings in dotfiles, that is faster than plugdrop. plu
 - Never reads `.credentials.json`, `~/.claude.json` or other credential files, and never edits `settings.json`:
   plugin installs go through `claude plugin install` only.
 - Never copies a skill, command or agent that looks like it contains a secret.
-- The snapshot repo must be private: plugdrop refuses to use an existing public repo.
-- No telemetry. Network access happens only through `git`, `gh` and the `claude` CLI.
+- On GitHub the snapshot repo must be private: plugdrop refuses to use an existing public repo. On another git
+  server or in a synced folder plugdrop cannot check this, and says so.
+- No telemetry. Network access happens only through `git`, `gh` and the `claude` CLI (a synced folder is moved by
+  your sync app, not by plugdrop).
 
 ## Privacy
 
 Your snapshots contain the author and machine names you choose, the list of your plugins and the content of your
-personal skills, commands and agents. They are stored only in your own private GitHub repo.
+personal skills, commands and agents. They are stored only where you chose: your private GitHub repo, your repo on another git server, or your synced
+folder. Keep the last two private as well.
+
+Your `CLAUDE.md`, skills, commands and agents may contain personal data (names, paths, notes). If you keep the
+snapshots on another git server or in a synced folder, that provider stores them under its own terms, which you
+accepted with it; plugdrop sends nothing anywhere else.
 
 The secret check is a safety net, not a guarantee: it recognizes common token formats and credential file names,
 not every password written in plain text. Do not keep secrets inside skills.
+
+## Third-party content
+
+Plugins and skills cloned from a git repo are never copied: plugdrop stores a reference and downloads them again
+from their original source, under their own licenses.
+
+Personal skills, commands and agents are copied, and some of them may be someone else's work (for example a skill
+you downloaded). plugdrop copies them only into the store you chose, for your own use on your own machines, like a
+backup. Keep that store private: publishing it could mean redistributing other people's work, and that is subject
+to their licenses. You are responsible for what you keep in your snapshots and for what you install from them.
 
 ## Limits
 

@@ -58,6 +58,8 @@ one line per item of `warnings`, the counts by `portability` and `personal_count
 5. Run `export --note "<note>"`, adding one `--category "<id>=<category>"` per assigned category (`<id>` is
    `plugin@marketplace` or `skill:name`, `command:name`, `agent:name`).
    Escape any double quotes inside the note.
-6. Report: the snapshot file name, the counts, and the repo. If `pushed` is false, show `push_error` and `hint`.
+6. Report: the snapshot file name, the counts, and the repo (or `saved_to`, for a synced folder: remind the user
+   to let the sync finish before importing on the other machine). If `pushed` is false, show `push_error` and
+   `hint`.
    In dry-run, say clearly that nothing was written or pushed.
    End with the "MCP notice" of the shared instructions (also in direct mode).

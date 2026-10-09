@@ -27,15 +27,26 @@ add your own again with `claude mcp add`."
 ## Setup (first run only)
 
 1. Run `config`. If `configured` is true, setup is done.
-2. Run `check`. If there are `problems`, explain each one with its fix and stop.
-3. Ask, showing the `defaults` from `config` as suggested values the user can just confirm:
-   author name, machine name, snapshot repo name.
-4. Run `setup --author "<author>" --machine "<machine>" --repo "<repo>"`.
-5. Tell the user what happened (`actions`): the private repo was created or reused, and where it lives.
+2. Ask where to keep the snapshots (one question):
+   - **GitHub** (first option, recommended): a private repo that plugdrop creates and checks is private. Needs
+     `git` and the GitHub CLI `gh`, logged in. Backend `github`.
+   - **Another git server** (GitLab, Gitea, your own...): an existing repo the user created. Needs `git`. plugdrop
+     cannot check that it is private. Backend `git`.
+   - **A synced folder** (OneDrive, Dropbox, Google Drive, a network share...): no git and no account. plugdrop
+     cannot check who can read it. Backend `folder`.
+3. Run `check --backend <backend>`. If there are `problems`, explain each one with its fix and stop.
+4. Ask, showing the `defaults` from `config` as suggested values the user can just confirm: author name, machine
+   name, and the store: for `github` the repo name (default from `config`), for `git` the repo URL (https or ssh,
+   without passwords in it), for `folder` the full folder path (suggest a `plugdrop` folder inside their synced
+   folder; use the same folder on every machine).
+5. Run `setup --backend <backend> --author "<author>" --machine "<machine>" --repo "<repo, URL or folder>"`.
+6. Tell the user what happened (`actions`) and show every item of `warnings`.
 
 ## Switching repo
 
-If the command arguments contain `--repo <name>` (a repo name, or `owner/name`), do this before anything else:
-run `config`, then `setup --author "<author>" --machine "<machine>" --repo "<name>"` with author and machine from
-the current config (ask for them only if plugdrop is not configured yet). Tell the user which repo is now in use;
-the old local clone is kept, never deleted. Then go on with the command.
+If the command arguments contain `--repo <name>` (a GitHub repo name or `owner/name`, a git URL, or a folder
+path), do this before anything else: run `config`, then `setup --backend <backend> --author "<author>" --machine
+"<machine>" --repo "<name>"` with author and machine from the current config (ask for them only if plugdrop is not
+configured yet). The backend follows from the value: a folder path → `folder`, an https/ssh URL → `git`, otherwise
+`github`; ask if unsure. Tell the user which store is now in use; the old copy is kept, never deleted. Then go on
+with the command.
