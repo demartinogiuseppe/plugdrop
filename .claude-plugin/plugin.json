@@ -1,7 +1,7 @@
 {
   "name": "plugdrop",
   "displayName": "plugdrop",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Save your Claude Code plugins and personal skills, commands and agents to a private GitHub repo and selectively reinstall them on another machine.",
   "author": {
     "name": "demartinogiuseppe",

@@ -164,6 +164,13 @@ def plan_statuses(snapshot_plugins, installed_ids):
     return plan
 
 
+def only_here(snapshot, here_ids):
+    """Ids present on this machine but not in the snapshot."""
+    in_snapshot = {f"{p['name']}@{p['marketplace']}" for p in snapshot.get("plugins", [])}
+    in_snapshot |= {i["id"] for i in snapshot.get("personal", [])}
+    return sorted(set(here_ids) - in_snapshot)
+
+
 def select(plan, mode, categories=None, values=()):
     """Pick the `to-install` items by mode: all | none | category | ids."""
     todo = [item for item in plan if item["status"] == TO_INSTALL]
@@ -279,6 +286,23 @@ def load_config():
 
 def repo_dir(config):
     return Path(config["local_path"]).expanduser()
+
+
+def origin_matches(url, full_name):
+    """True if a git remote URL points to GitHub repo `owner/name` (https or ssh form)."""
+    clean = url.strip().rstrip("/").lower()
+    if clean.endswith(".git"):
+        clean = clean[:-4]
+    want = full_name.lower()
+    return clean.endswith("/" + want) or clean.endswith(":" + want)
+
+
+def clone_dir(home, full_name, config):
+    """Local clone for `full_name`: the configured one if it is the same repo, else repos/<owner>/<name>."""
+    if config and config.get("repo", "").lower() == full_name.lower():
+        return Path(config["local_path"]).expanduser()
+    owner, _, name = full_name.partition("/")
+    return home / "repos" / safe_part(owner) / safe_part(name)
 
 
 def read_categories(folder):
@@ -619,8 +643,18 @@ def cmd_setup(args):
         return {"ok": False, "problems": problems}
     owner = gh_user()
     full_name = args.repo if "/" in args.repo else f"{owner}/{args.repo}"
-    local = plugdrop_home() / "repo"
+    previous = load_config() if config_path().exists() else None
+    local = clone_dir(plugdrop_home(), full_name, previous)
     actions = []
+    if (local / ".git").exists():
+        origin = run_tool("git", ["-C", str(local), "remote", "get-url", "origin"])
+        if origin.returncode != 0 or not origin_matches(origin.stdout, full_name):
+            return {"ok": False, "error": f"{local} is a clone of {origin.stdout.strip() or 'an unknown repo'}, "
+                                          f"not of {full_name}. plugdrop does not delete or reuse it; "
+                                          "move or remove that folder yourself, then run the setup again."}
+    if previous and previous.get("repo") != full_name:
+        actions.append(f"switch from {previous.get('repo')} to {full_name} "
+                       f"(the old clone stays in {previous.get('local_path')})")
 
     view = run_tool("gh", ["repo", "view", full_name, "--json", "visibility", "--jq", ".visibility"])
     if view.returncode == 0:
@@ -764,12 +798,17 @@ def cmd_import_plan(args):
     snapshot, plan, _ = _plan(folder, args.snapshot)
     todo = [i for i in plan if i["status"] == TO_INSTALL]
     items = [{k: v for k, v in i.items() if k != "files"} for i in plan]
-    return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "machine": snapshot.get("machine"),
-            "note": snapshot.get("note"), "items": items,
-            "counts": {s: sum(1 for i in plan if i["status"] == s)
-                       for s in (INSTALLED, TO_INSTALL, DIFFERENT, NOT_PORTABLE, INFO_ONLY)},
-            "categories_available": sorted({i["category"] for i in todo if i["category"]}),
-            "kinds_available": sorted({i["kind"] for i in todo})}
+    result = {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "machine": snapshot.get("machine"),
+              "note": snapshot.get("note"), "items": items,
+              "counts": {s: sum(1 for i in plan if i["status"] == s)
+                         for s in (INSTALLED, TO_INSTALL, DIFFERENT, NOT_PORTABLE, INFO_ONLY)},
+              "categories_available": sorted({i["category"] for i in todo if i["category"]}),
+              "kinds_available": sorted({i["kind"] for i in todo})}
+    if args.diff:
+        personal, _, _ = scan_personal(claude_home(), git_origin)
+        here = user_scope_ids(installed_plugins()) | {i["id"] for i in personal}
+        result["only_here"] = only_here(snapshot, here)
+    return result
 
 
 def cmd_import(args):
@@ -834,6 +873,7 @@ def build_parser():
 
     p = sub.add_parser("import-plan", help="compare a snapshot with this machine")
     p.add_argument("--snapshot", required=True, help="snapshot file name, or \"latest\"")
+    p.add_argument("--diff", action="store_true", help="also list what is here but not in the snapshot")
     p.set_defaults(func=cmd_import_plan)
 
     p = sub.add_parser("import", help="install the chosen plugins from a snapshot")

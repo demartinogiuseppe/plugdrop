@@ -218,6 +218,29 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(sum(1 for r in report if r["add_marketplace"]), 2)
 
 
+class RepoChoiceTests(unittest.TestCase):
+    def test_origin_matches(self):
+        for url in ("https://github.com/me/snaps.git", "https://github.com/Me/Snaps", "git@github.com:me/snaps.git\n"):
+            self.assertTrue(pd.origin_matches(url, "me/snaps"), url)
+        for url in ("https://github.com/me/other.git", "https://github.com/notme/snaps.git", ""):
+            self.assertFalse(pd.origin_matches(url, "me/snaps"), url)
+
+    def test_clone_dir(self):
+        home = Path("/h")
+        legacy = {"repo": "me/snaps", "local_path": "/h/repo"}
+        self.assertEqual(pd.clone_dir(home, "me/snaps", legacy), Path("/h/repo"))
+        self.assertEqual(pd.clone_dir(home, "me/other", legacy), home / "repos" / "me" / "other")
+        self.assertEqual(pd.clone_dir(home, "me/snaps", None), home / "repos" / "me" / "snaps")
+
+
+class OnlyHereTests(unittest.TestCase):
+    def test_lists_what_the_snapshot_lacks(self):
+        snapshot = {"plugins": [{"name": "alpha", "marketplace": "m"}], "personal": [{"id": "skill:a"}]}
+        here = {"alpha@m", "beta@m", "skill:a", "agent:z"}
+        self.assertEqual(pd.only_here(snapshot, here), ["agent:z", "beta@m"])
+        self.assertEqual(pd.only_here({}, {"x@m"}), ["x@m"])
+
+
 def make_home(root):
     """A fake Claude config dir with every kind of personal item."""
     home = Path(root) / "claude"
