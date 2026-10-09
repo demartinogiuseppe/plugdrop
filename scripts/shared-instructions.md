@@ -32,3 +32,10 @@ add your own again with `claude mcp add`."
    author name, machine name, snapshot repo name.
 4. Run `setup --author "<author>" --machine "<machine>" --repo "<repo>"`.
 5. Tell the user what happened (`actions`): the private repo was created or reused, and where it lives.
+
+## Switching repo
+
+If the command arguments contain `--repo <name>` (a repo name, or `owner/name`), do this before anything else:
+run `config`, then `setup --author "<author>" --machine "<machine>" --repo "<name>"` with author and machine from
+the current config (ask for them only if plugdrop is not configured yet). Tell the user which repo is now in use;
+the old local clone is kept, never deleted. Then go on with the command.

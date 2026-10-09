@@ -1,6 +1,6 @@
 ---
 description: Save your plugins, personal skills, commands and agents as a new snapshot in your private repo (plugdrop)
-argument-hint: "[--direct] [--dry-run]"
+argument-hint: "[--direct] [--dry-run] [--repo <name>]"
 allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 ---
 
@@ -10,7 +10,8 @@ Talk to the user in their language. Run the script as described in the "Running 
 `${CLAUDE_PLUGIN_ROOT}/scripts/shared-instructions.md`. If `config` says plugdrop is not configured, do its "Setup"
 section first.
 
-Arguments: $ARGUMENTS. If they contain `--dry-run`, pass `--dry-run` to the final `export` call.
+Arguments: $ARGUMENTS. If they contain `--dry-run`, pass `--dry-run` to the final `export` call. If they contain
+`--repo <name>`, first follow "Switching repo" in the shared instructions.
 
 Export saves the **list** of plugins (name, marketplace, source, version), never the plugins' files. It also
 saves your **personal** skills, commands and agents (the ones in the Claude config folder, not those that come

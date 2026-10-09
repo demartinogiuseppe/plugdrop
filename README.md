@@ -74,8 +74,15 @@ Each command first asks: **guided or direct?** Add `--direct` to skip the questi
 
 Both commands accept `--dry-run`: they show what would happen and change nothing.
 
+`/plugdrop:import --diff` only compares: what is in a snapshot but missing here, what is here but not in the
+snapshot, and what has the same name but different content. It installs nothing.
+
 On first run plugdrop checks `git`, `gh` and your GitHub login, asks for author, machine and repo name, creates the
-private repo if needed, clones it into `~/.plugdrop/repo/` and saves `~/.plugdrop/config.json`.
+private repo if needed, clones it into `~/.plugdrop/repos/<owner>/<name>/` and saves `~/.plugdrop/config.json`.
+
+To use another snapshot repo later, add `--repo <name>` (or `--repo owner/name`) to either command. plugdrop
+clones the new repo next to the old one and switches to it; the old clone is kept. If a local clone turns out to
+belong to a different repo than the one you chose, plugdrop stops and tells you, instead of using it.
 
 ### Categories
 

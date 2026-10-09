@@ -1,6 +1,6 @@
 ---
 description: Install plugins, skills, commands and agents from one of your snapshots, choosing which ones (plugdrop)
-argument-hint: "[--direct] [--dry-run]"
+argument-hint: "[--direct] [--dry-run] [--diff] [--repo <name>]"
 allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 ---
 
@@ -10,7 +10,21 @@ Talk to the user in their language. Run the script as described in the "Running 
 `${CLAUDE_PLUGIN_ROOT}/scripts/shared-instructions.md`. If `config` says plugdrop is not configured, do its "Setup"
 section first.
 
-Arguments: $ARGUMENTS. If they contain `--dry-run`, stop after showing the plan in step 5.
+Arguments: $ARGUMENTS. If they contain `--dry-run`, stop after showing the plan in step 5. If they contain
+`--repo <name>`, first follow "Switching repo" in the shared instructions.
+
+## Compare only (`--diff`)
+
+If the arguments contain `--diff`, install nothing and ask no guided/direct question. Run `snapshots` and let the
+user pick a snapshot (the newest is the first option), then run `import-plan --snapshot "<file>" --diff` and show,
+grouped by kind (`plugin`, `skill`, `command`, `agent`):
+- **only in the snapshot**: `to-install` items (missing here)
+- **only here**: `only_here` (not in the snapshot; an export would add them)
+- **different**: `different` items (same name, different content)
+- **same**: just the count of `installed` items
+Mention `not-portable` and `info-only` items only as counts. When a group is long, give the count and the first
+names. Then stop: say that `/plugdrop:import` installs what is missing and `/plugdrop:export` saves what is only
+here.
 
 plugdrop only adds. It never uninstalls or disables a plugin, and never overwrites a skill, command or agent
 that already exists here.
