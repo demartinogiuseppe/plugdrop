@@ -298,6 +298,16 @@ def list_snapshots(folder):
     return snapshots, warnings
 
 
+def resolve_snapshot(folder, name):
+    """'latest' -> file name of the newest snapshot; any other name is returned unchanged."""
+    if name != "latest":
+        return name
+    snapshots, _ = list_snapshots(folder)
+    if not snapshots:
+        raise PlugdropError("There are no snapshots yet.")
+    return snapshots[0]["file"]
+
+
 def load_snapshot(folder, name):
     if Path(name).name != name or not name.endswith(".json"):
         raise PlugdropError(f"Invalid snapshot name: {name}")
@@ -454,7 +464,7 @@ def cmd_snapshots(_args):
 
 
 def _plan(folder, snapshot_name):
-    snapshot = load_snapshot(folder, snapshot_name)
+    snapshot = load_snapshot(folder, resolve_snapshot(folder, snapshot_name))
     plan = plan_statuses(snapshot.get("plugins", []), user_scope_ids(installed_plugins()))
     categories = read_categories(folder)
     for item in plan:
@@ -467,7 +477,7 @@ def cmd_import_plan(args):
     git(["pull", "--ff-only"], folder)
     snapshot, plan, _ = _plan(folder, args.snapshot)
     todo = [i for i in plan if i["status"] == TO_INSTALL]
-    return {"ok": True, "snapshot": args.snapshot, "machine": snapshot.get("machine"),
+    return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "machine": snapshot.get("machine"),
             "note": snapshot.get("note"), "items": plan,
             "counts": {s: sum(1 for i in plan if i["status"] == s)
                        for s in (INSTALLED, TO_INSTALL, NOT_PORTABLE, INFO_ONLY)},
@@ -497,7 +507,8 @@ def cmd_import(args):
                 row["version_changed"] = row["installed_version"] != row["snapshot_version"]
 
     chosen_ids = {i["id"] for i in chosen}
-    return {"ok": True, "dry_run": args.dry_run, "results": report,
+    return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "dry_run": args.dry_run,
+            "results": report,
             "already_installed": [i["id"] for i in plan if i["status"] == INSTALLED],
             "skipped": [i["id"] for i in plan if i["status"] == TO_INSTALL and i["id"] not in chosen_ids],
             "not_portable": [i["id"] for i in plan if i["status"] == NOT_PORTABLE],
@@ -528,11 +539,11 @@ def build_parser():
     sub.add_parser("snapshots", help="list snapshots, newest first").set_defaults(func=cmd_snapshots)
 
     p = sub.add_parser("import-plan", help="compare a snapshot with this machine")
-    p.add_argument("--snapshot", required=True)
+    p.add_argument("--snapshot", required=True, help="snapshot file name, or \"latest\"")
     p.set_defaults(func=cmd_import_plan)
 
     p = sub.add_parser("import", help="install the chosen plugins from a snapshot")
-    p.add_argument("--snapshot", required=True)
+    p.add_argument("--snapshot", required=True, help="snapshot file name, or \"latest\"")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true")
     group.add_argument("--category", action="append", metavar="CATEGORY")

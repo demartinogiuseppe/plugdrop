@@ -113,6 +113,23 @@ class SnapshotFileTests(unittest.TestCase):
             self.assertEqual(json.loads((folder / second).read_text(encoding="utf-8"))["note"], "two")
 
 
+class LatestSnapshotTests(unittest.TestCase):
+    def test_latest_resolves_to_newest_and_names_pass_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            snaps = folder / "snapshots"
+            snaps.mkdir()
+            for name, created in (("a.json", "2026-01-01T10:00:00+02:00"), ("b.json", "2026-03-01T10:00:00+02:00")):
+                (snaps / name).write_text(json.dumps({"created_at": created, "plugins": []}), encoding="utf-8")
+            self.assertEqual(pd.resolve_snapshot(folder, "latest"), "b.json")
+            self.assertEqual(pd.resolve_snapshot(folder, "a.json"), "a.json")
+
+    def test_latest_without_snapshots_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(pd.PlugdropError):
+                pd.resolve_snapshot(Path(tmp), "latest")
+
+
 SNAPSHOT_PLUGINS = [
     {"name": "alpha", "marketplace": "gh-market", "marketplace_source": "example-owner/gh-market",
      "portability": "portable", "version": "1.0.0", "enabled": True},

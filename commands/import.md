@@ -1,6 +1,6 @@
 ---
 description: Install plugins from one of your snapshots, choosing which ones (plugdrop)
-argument-hint: "[--dry-run]"
+argument-hint: "[--direct] [--dry-run]"
 allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 ---
 
@@ -13,6 +13,17 @@ section first.
 Arguments: $ARGUMENTS. If they contain `--dry-run`, stop after showing the plan in step 5.
 
 plugdrop only installs plugins. It never uninstalls or disables anything.
+
+## Mode
+
+If the arguments contain `--direct` (or `--diretta`), use direct mode. Otherwise, after setup, ask one question:
+**Guided or direct?** Guided (first option): the steps below, choosing snapshot and plugins. Direct: the most
+recent snapshot, every missing plugin, no questions and no confirmation.
+
+Direct mode: run `import --snapshot latest --all` (with `--dry-run` if requested). Then give the final report of
+step 7, saying which snapshot was used (`snapshot`), and the reminder of step 8. Stop there.
+
+## Guided mode
 
 1. Run `snapshots`. If the list is empty, say there is nothing to import yet and stop.
 2. Show the snapshots, newest first: date, machine, author, note, number of plugins. Let the user pick one.

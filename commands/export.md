@@ -1,6 +1,6 @@
 ---
 description: Save the list of installed plugins as a new snapshot in your private repo (plugdrop)
-argument-hint: "[--dry-run]"
+argument-hint: "[--direct] [--dry-run]"
 allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 ---
 
@@ -13,6 +13,18 @@ section first.
 Arguments: $ARGUMENTS. If they contain `--dry-run`, pass `--dry-run` to the final `export` call.
 
 Export saves the **list** of plugins (name, marketplace, source, version), never the plugins' files.
+
+## Mode
+
+If the arguments contain `--direct` (or `--diretta`), use direct mode. Otherwise, after setup, ask one question:
+**Guided or direct?** Guided (first option): the steps below, with summary, categories and note. Direct: no
+questions at all.
+
+Direct mode: run `export --note "Direct export from <machine>"` (translate the note into the user's language,
+`<machine>` from `config`), with no `--category` (existing categories are kept). Then report as in step 6, adding
+one line per item of `warnings` and the counts by `portability`. Stop there.
+
+## Guided mode
 
 1. Run `export-preview`.
 2. Show a summary grouped by `portability`, with counts:
