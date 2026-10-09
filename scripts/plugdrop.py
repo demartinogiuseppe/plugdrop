@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""plugdrop: save the list of installed Claude Code plugins to a private GitHub repo and reinstall it elsewhere.
+"""plugdrop: save your Claude Code plugins, skills, commands and agents to a private GitHub repo and reinstall them elsewhere.
 
 This script does the deterministic work only (reading, writing, git, CLI calls). The dialog with the
 user lives in commands/*.md. Every subcommand prints exactly one JSON object on stdout.
@@ -7,12 +7,15 @@ user lives in commands/*.md. Every subcommand prints exactly one JSON object on 
 Safety rules enforced here:
 - snapshots are written with exclusive create: an existing file is never overwritten or deleted;
 - plugins are only ever installed, never uninstalled or disabled;
+- skills, commands and agents are only created where missing, never overwritten; files that look like
+  secrets are never copied;
 - plugin data comes from the official CLI (`claude plugin list --json`), never from credential files;
 - snapshot entries are built from a whitelist of fields, and credentials are stripped from URLs.
 """
 import argparse
 import datetime as dt
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -26,7 +29,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 if sys.version_info < (3, 8):
     sys.exit('{"ok": false, "error": "plugdrop needs Python 3.8 or newer."}')
 
-PLUGDROP_VERSION = 1
+PLUGDROP_VERSION = 2
 USER_SCOPE = "user"
 SECRET_PARAM = re.compile(r"token|auth|key|secret|passw|pwd|sig|credential", re.I)
 UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
@@ -321,6 +324,267 @@ def user_scope_ids(plugins):
     return {p["id"] for p in plugins if p.get("scope") == USER_SCOPE}
 
 
+# ---------------------------------------------------------------- personal skills, commands and agents
+#
+# Items found in the Claude config dir: skills/<name>/SKILL.md, commands/**/*.md, agents/**/*.md.
+# A skill that is a clone of a remote git repo is stored as a reference (url + commit) and cloned on import.
+# Everything else is stored as content-addressed blobs in the snapshot repo (files/<sha[:2]>/<sha>).
+# An item that looks like it contains a secret, or is too large, is recorded by name only and never copied.
+# Import only creates what is missing: an existing skill, command or agent is never overwritten.
+
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+MAX_FILE_BYTES = 1_000_000
+MAX_ITEM_BYTES = 10_000_000
+SECRET_FILE = re.compile(r"^(\.env(\..*)?|.*\.(pem|key|p12|pfx)|id_(rsa|dsa|ecdsa|ed25519)|\.?credentials.*)$", re.I)
+SECRET_TEXT = re.compile(
+    rb"(?<![A-Za-z0-9])(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}"
+    rb"|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})"
+    rb"|-----BEGIN [A-Z ]*PRIVATE KEY-----")
+BAD_PATH_CHARS = re.compile(r'[\\:*?"<>|\x00-\x1f]')
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+DIFFERENT = "different"
+
+
+def claude_home():
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def looks_secret(name, data):
+    """True if a file name or its content looks like a credential."""
+    if SECRET_FILE.match(name):
+        return True
+    for match in SECRET_TEXT.finditer(data):
+        text = match.group(0)
+        if b"EXAMPLE" in text.upper():  # documentation keys such as AKIAIOSFODNN7EXAMPLE
+            continue
+        if text.startswith(b"-----") or re.search(rb"\d", text):
+            return True
+    return False
+
+
+def _excluded(kind, name, reason):
+    return {"id": f"{kind}:{name}", "kind": kind, "name": name, "source": "excluded", "reason": reason}
+
+
+def _read_files(kind, name, files, blobs):
+    """files: [(relative posix path, Path)]. Returns (file entries, None) or (None, excluded item)."""
+    entries, total = [], 0
+    for rel, path in files:
+        if path.is_symlink():
+            return None, _excluded(kind, name, f"contains a link: {rel}")
+        size = path.stat().st_size
+        total += size
+        if size > MAX_FILE_BYTES or total > MAX_ITEM_BYTES:
+            return None, _excluded(kind, name, f"too large: {rel}")
+        data = path.read_bytes()
+        if looks_secret(path.name, data):
+            return None, _excluded(kind, name, f"may contain a secret: {rel}")
+        sha = hashlib.sha256(data).hexdigest()
+        blobs[sha] = path
+        entries.append({"path": rel, "sha256": sha, "size": size})
+    return entries, None
+
+
+def _skill_files(folder):
+    files = []
+    for root, dirs, names in os.walk(folder):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        for n in sorted(names):
+            path = Path(root) / n
+            files.append((path.relative_to(folder).as_posix(), path))
+    return files
+
+
+def scan_personal(home, git_origin):
+    """Find personal items under `home`. git_origin(path) -> {url, commit, dirty} or None.
+
+    Returns (items, blobs, warnings); blobs maps sha256 -> source file.
+    """
+    items, blobs, warnings = [], {}, []
+    skills = home / "skills"
+    for folder in sorted(skills.iterdir()) if skills.is_dir() else []:
+        name = folder.name
+        if name.startswith(".") or not folder.is_dir() or not (folder / "SKILL.md").is_file():
+            continue
+        origin = git_origin(folder) if (folder / ".git").exists() else None
+        url = (origin or {}).get("url", "")
+        if re.match(r"^(https?://|ssh://|git@)", url):
+            url, cleaned = strip_credentials(url)
+            if cleaned:
+                warnings.append(f"Removed credentials from the git URL of skill '{name}'.")
+            if origin.get("dirty"):
+                warnings.append(f"Skill '{name}' has local changes that are not exported; import clones the remote.")
+            items.append({"id": f"skill:{name}", "kind": "skill", "name": name, "source": "git",
+                          "url": url, "commit": origin.get("commit")})
+            continue
+        files, excluded = _read_files("skill", name, _skill_files(folder), blobs)
+        items.append(excluded or {"id": f"skill:{name}", "kind": "skill", "name": name, "source": "files",
+                                  "files": files})
+    for kind, sub in (("command", "commands"), ("agent", "agents")):
+        base = home / sub
+        for path in sorted(base.rglob("*.md")) if base.is_dir() else []:
+            rel = path.relative_to(base)
+            if any(part.startswith(".") for part in rel.parts):
+                continue
+            name = rel.with_suffix("").as_posix()
+            files, excluded = _read_files(kind, name, [(rel.name, path)], blobs)
+            items.append(excluded or {"id": f"{kind}:{name}", "kind": kind, "name": name, "source": "files",
+                                      "files": files})
+    for item in items:
+        if item["source"] == "excluded":
+            warnings.append(f"Not exported: {item['id']} ({item['reason']}).")
+    return items, blobs, warnings
+
+
+def _check_relative(text, what):
+    parts = text.split("/")
+    if any(p in ("", ".", "..") or BAD_PATH_CHARS.search(p) for p in parts):
+        raise PlugdropError(f"Unsafe {what} in snapshot: {text!r}")
+
+
+def target_path(home, item):
+    """Where an item lives on this machine. Rejects names that would escape the config dir."""
+    kind, name = item.get("kind"), item.get("name", "")
+    if kind == "skill":
+        _check_relative(name, "skill name")
+        if "/" in name:
+            raise PlugdropError(f"Unsafe skill name in snapshot: {name!r}")
+        return home / "skills" / name
+    if kind in ("command", "agent"):
+        _check_relative(name, f"{kind} name")
+        return home / f"{kind}s" / f"{name}.md"
+    raise PlugdropError(f"Unknown item kind in snapshot: {kind!r}")
+
+
+def _file_targets(home, item):
+    """[(target file, sha256)] for a files item, with paths and hashes validated."""
+    target = target_path(home, item)
+    pairs = []
+    for f in item.get("files", []):
+        if not SHA256.match(f.get("sha256", "")):
+            raise PlugdropError(f"Invalid hash in snapshot for {item['id']}")
+        _check_relative(f.get("path", ""), "file path")
+        pairs.append((target / f["path"] if item["kind"] == "skill" else target, f["sha256"]))
+    return pairs
+
+
+def _sha_of(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+
+
+def plan_personal(items, home):
+    """Status of each snapshot item on this machine: installed | to-install | different | not-portable."""
+    plan = []
+    for item in items:
+        if item.get("source") == "excluded":
+            status = NOT_PORTABLE
+        else:
+            target = target_path(home, item)
+            if not target.exists():
+                status = TO_INSTALL
+            elif item["source"] == "git":
+                status = INSTALLED if (target / ".git").exists() else DIFFERENT
+            else:
+                same = all(_sha_of(path) == sha for path, sha in _file_targets(home, item))
+                status = INSTALLED if same else DIFFERENT
+        plan.append({**item, "status": status})
+    return plan
+
+
+def blob_path(folder, sha):
+    return folder / "files" / sha[:2] / sha
+
+
+def store_blobs(folder, blobs):
+    """Copy each blob into the snapshot repo once. Returns the repo-relative paths of new files."""
+    added = []
+    for sha, source in sorted(blobs.items()):
+        dest = blob_path(folder, sha)
+        if dest.exists():
+            continue
+        data = source.read_bytes()
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise PlugdropError(f"{source} changed during export; run the export again.")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "xb") as f:
+            f.write(data)
+        added.append(dest.relative_to(folder).as_posix())
+    return added
+
+
+def _read_blob(folder, sha):
+    path = blob_path(folder, sha)
+    if not path.is_file():
+        raise PlugdropError(f"Missing file {sha[:12]} in the snapshot repo.")
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != sha:
+        raise PlugdropError(f"File {sha[:12]} in the snapshot repo is corrupted.")
+    return data
+
+
+def _write_files_item(item, home, folder):
+    target = target_path(home, item)
+    contents = [(path, _read_blob(folder, sha)) for path, sha in _file_targets(home, item)]
+    if target.exists():
+        raise PlugdropError(f"{target} already exists; plugdrop never overwrites it.")
+    if item["kind"] != "skill":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "xb") as f:
+            f.write(contents[0][1])
+        return
+    # Build the skill next to its final place, then move it in with one rename.
+    staging = target.parent / f".plugdrop-staging-{target.name}-{os.getpid()}"
+    try:
+        staging.mkdir(parents=True)
+        for path, data in contents:
+            dest = staging / path.relative_to(target)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with open(dest, "xb") as f:
+                f.write(data)
+        os.rename(staging, target)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def install_personal(chosen, home, folder, clone, dry_run=False):
+    """Create each chosen item. clone(url, target) clones a git skill. One failure never stops the rest."""
+    report = []
+    for item in chosen:
+        row = {"id": item["id"], "kind": item["kind"], "source": item["source"]}
+        if dry_run:
+            report.append({**row, "result": "would-install"})
+            continue
+        try:
+            if item["source"] == "git":
+                target = target_path(home, item)
+                if target.exists():
+                    raise PlugdropError(f"{target} already exists; plugdrop never overwrites it.")
+                clone(item["url"], target)
+            else:
+                _write_files_item(item, home, folder)
+            report.append({**row, "result": "installed"})
+        except (PlugdropError, OSError) as exc:
+            report.append({**row, "result": "failed", "error": str(exc)})
+    return report
+
+
+def git_origin(path):
+    """{url, commit, dirty} of a git checkout, or None when it has no 'origin' remote."""
+    result = run_tool("git", ["-C", str(path), "remote", "get-url", "origin"])
+    if result.returncode != 0:
+        return None
+    head = run_tool("git", ["-C", str(path), "rev-parse", "HEAD"])
+    status = run_tool("git", ["-C", str(path), "status", "--porcelain"])
+    return {"url": result.stdout.strip(), "commit": head.stdout.strip() if head.returncode == 0 else None,
+            "dirty": bool(status.stdout.strip())}
+
+
+def git_clone(url, target):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _check(run_tool("git", ["clone", "--quiet", url, str(target)], timeout=1800))
+
+
 # ---------------------------------------------------------------- subcommands
 
 SNAPSHOT_REPO_README = """# plugdrop snapshots
@@ -328,9 +592,11 @@ SNAPSHOT_REPO_README = """# plugdrop snapshots
 Private repository written by the plugdrop plugin for Claude Code.
 
 - `snapshots/`: one JSON file per export. Files are never overwritten.
-- `categories.json`: `{"plugin@marketplace": "category"}`. Shared by all snapshots; edit it freely.
+- `files/`: contents of your personal skills, commands and agents, one file per content hash.
+- `categories.json`: `{"plugin@marketplace" or "skill:name": "category"}`. Shared by all snapshots; edit it freely.
 
-Snapshots contain only plugin names, marketplace sources and versions: no plugin code, no credentials.
+Plugins are stored as references (name, marketplace source, version), never as code. Files that look like
+credentials are never copied.
 """
 
 
@@ -400,16 +666,28 @@ def _current_entries():
     return build_entries(installed_plugins(), known_marketplaces())
 
 
+def _personal_summary(items):
+    """Compact view of personal items: no file lists."""
+    rows = [{"id": i["id"], "source": i["source"], **({"reason": i["reason"]} if "reason" in i else {}),
+             **({"files": len(i["files"])} if "files" in i else {})} for i in items]
+    counts = {k: sum(1 for i in items if i["source"] == k) for k in ("files", "git", "excluded")}
+    return rows, counts
+
+
 def cmd_export_preview(_args):
     config = load_config()
     folder = repo_dir(config)
     git(["pull", "--ff-only"], folder)
     entries, warnings = _current_entries()
+    personal, _, personal_warnings = scan_personal(claude_home(), git_origin)
     categories = read_categories(folder)
     ids = [f"{e['name']}@{e['marketplace']}" for e in entries if e["portability"] != "non-user-scope"]
+    ids += [i["id"] for i in personal if i["source"] != "excluded"]
     counts = {k: sum(1 for e in entries if e["portability"] == k) for k in PORTABILITY_ORDER}
+    rows, personal_counts = _personal_summary(personal)
     return {"ok": True, "machine": config["machine"], "author": config["author"], "counts": counts,
-            "plugins": entries, "warnings": warnings, "categories": categories,
+            "plugins": entries, "personal": rows, "personal_counts": personal_counts,
+            "warnings": warnings + personal_warnings, "categories": categories,
             "uncategorized": [i for i in ids if i not in categories]}
 
 
@@ -422,19 +700,25 @@ def cmd_export(args):
     if not args.dry_run:
         git(["pull", "--ff-only"], folder)
     entries, warnings = _current_entries()
+    personal, blobs, personal_warnings = scan_personal(claude_home(), git_origin)
+    warnings += personal_warnings
     now = dt.datetime.now().astimezone()
     snapshot = {"plugdrop_version": PLUGDROP_VERSION, "created_at": now.isoformat(timespec="seconds"),
                 "author": config["author"], "machine": config["machine"], "note": note,
-                "claude_code_version": claude_version(), "plugins": entries}
+                "claude_code_version": claude_version(), "plugins": entries, "personal": personal}
     new_categories = dict(c.split("=", 1) for c in args.category)
     counts = {k: sum(1 for e in entries if e["portability"] == k) for k in PORTABILITY_ORDER}
+    _, personal_counts = _personal_summary(personal)
     if args.dry_run:
         existing = {p.name for p in (folder / "snapshots").glob("*.json")}
         name = snapshot_filename(now, config["machine"], config["author"], existing)
+        new_files = sum(1 for sha in blobs if not blob_path(folder, sha).exists())
         return {"ok": True, "dry_run": True, "would_write": f"snapshots/{name}", "counts": counts,
+                "personal_counts": personal_counts, "new_files": new_files,
                 "categories_to_set": new_categories, "warnings": warnings}
 
-    to_add = []
+    # Add the folder, not each blob: hundreds of paths would overflow the Windows command line.
+    to_add = ["files"] if store_blobs(folder, blobs) else []
     if new_categories:
         categories = read_categories(folder)
         categories.update(new_categories)
@@ -445,8 +729,8 @@ def cmd_export(args):
     to_add.append(f"snapshots/{name}")
     git(["add", *to_add], folder)
     git(["commit", "-m", f"plugdrop: export {config['machine']} {now:%Y-%m-%d}"], folder)
-    result = {"ok": True, "snapshot": f"snapshots/{name}", "counts": counts, "warnings": warnings,
-              "repo": config["repo"]}
+    result = {"ok": True, "snapshot": f"snapshots/{name}", "counts": counts, "personal_counts": personal_counts,
+              "warnings": warnings, "repo": config["repo"]}
     try:
         git(["push"], folder)
         result["pushed"] = True
@@ -465,7 +749,9 @@ def cmd_snapshots(_args):
 
 def _plan(folder, snapshot_name):
     snapshot = load_snapshot(folder, resolve_snapshot(folder, snapshot_name))
-    plan = plan_statuses(snapshot.get("plugins", []), user_scope_ids(installed_plugins()))
+    plan = [{**item, "kind": "plugin"}
+            for item in plan_statuses(snapshot.get("plugins", []), user_scope_ids(installed_plugins()))]
+    plan += plan_personal(snapshot.get("personal", []), claude_home())
     categories = read_categories(folder)
     for item in plan:
         item["category"] = categories.get(item["id"])
@@ -477,11 +763,13 @@ def cmd_import_plan(args):
     git(["pull", "--ff-only"], folder)
     snapshot, plan, _ = _plan(folder, args.snapshot)
     todo = [i for i in plan if i["status"] == TO_INSTALL]
+    items = [{k: v for k, v in i.items() if k != "files"} for i in plan]
     return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "machine": snapshot.get("machine"),
-            "note": snapshot.get("note"), "items": plan,
+            "note": snapshot.get("note"), "items": items,
             "counts": {s: sum(1 for i in plan if i["status"] == s)
-                       for s in (INSTALLED, TO_INSTALL, NOT_PORTABLE, INFO_ONLY)},
-            "categories_available": sorted({i["category"] for i in todo if i["category"]})}
+                       for s in (INSTALLED, TO_INSTALL, DIFFERENT, NOT_PORTABLE, INFO_ONLY)},
+            "categories_available": sorted({i["category"] for i in todo if i["category"]}),
+            "kinds_available": sorted({i["kind"] for i in todo})}
 
 
 def cmd_import(args):
@@ -491,26 +779,32 @@ def cmd_import(args):
         chosen = select(plan, "all")
     elif args.category:
         chosen = select(plan, "category", categories, args.category)
+    elif args.kind:
+        chosen = [i for i in select(plan, "all") if i["kind"] in args.kind]
     elif args.ids:
         wanted = [i.strip() for i in args.ids.split(",") if i.strip()]
         chosen = select(plan, "ids", values=wanted)
     else:
         chosen = []
-    marketplaces = {m.get("name") for m in known_marketplaces()}
-    report = install(chosen, marketplaces, claude, dry_run=args.dry_run)
+    chosen_plugins = [i for i in chosen if i["kind"] == "plugin"]
+    marketplaces = {m.get("name") for m in known_marketplaces()} if chosen_plugins else set()
+    report = install(chosen_plugins, marketplaces, claude, dry_run=args.dry_run)
+    report += install_personal([i for i in chosen if i["kind"] != "plugin"], claude_home(), folder, git_clone,
+                               dry_run=args.dry_run)
 
-    if not args.dry_run and any(r["result"] == "installed" for r in report):
+    installed_plugin_rows = [r for r in report if r["result"] == "installed" and "snapshot_version" in r]
+    if not args.dry_run and installed_plugin_rows:
         versions = {p["id"]: p.get("version") for p in installed_plugins() if p.get("scope") == USER_SCOPE}
-        for row in report:
-            if row["result"] == "installed":
-                row["installed_version"] = versions.get(row["id"])
-                row["version_changed"] = row["installed_version"] != row["snapshot_version"]
+        for row in installed_plugin_rows:
+            row["installed_version"] = versions.get(row["id"])
+            row["version_changed"] = row["installed_version"] != row["snapshot_version"]
 
     chosen_ids = {i["id"] for i in chosen}
     return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "dry_run": args.dry_run,
             "results": report,
             "already_installed": [i["id"] for i in plan if i["status"] == INSTALLED],
             "skipped": [i["id"] for i in plan if i["status"] == TO_INSTALL and i["id"] not in chosen_ids],
+            "different": [i["id"] for i in plan if i["status"] == DIFFERENT],
             "not_portable": [i["id"] for i in plan if i["status"] == NOT_PORTABLE],
             "info_only": [i["id"] for i in plan if i["status"] == INFO_ONLY]}
 
@@ -547,6 +841,7 @@ def build_parser():
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true")
     group.add_argument("--category", action="append", metavar="CATEGORY")
+    group.add_argument("--kind", action="append", choices=["plugin", "skill", "command", "agent"])
     group.add_argument("--ids", metavar="ID,ID,...")
     group.add_argument("--none", action="store_true")
     p.add_argument("--dry-run", action="store_true")

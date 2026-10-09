@@ -4,12 +4,12 @@
     "name": "demartinogiuseppe",
     "url": "https://github.com/demartinogiuseppe"
   },
-  "description": "plugdrop: move your Claude Code plugin list between machines.",
+  "description": "plugdrop: move your Claude Code setup between machines.",
   "plugins": [
     {
       "name": "plugdrop",
       "source": "./",
-      "description": "Export the list of your installed Claude Code plugins to a private GitHub repo and selectively reinstall it on another machine."
+      "description": "Save your Claude Code plugins and personal skills, commands and agents to a private GitHub repo and selectively reinstall them on another machine."
     }
   ]
 }

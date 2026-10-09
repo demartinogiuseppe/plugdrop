@@ -1,5 +1,5 @@
 ---
-description: Save the list of installed plugins as a new snapshot in your private repo (plugdrop)
+description: Save your plugins, personal skills, commands and agents as a new snapshot in your private repo (plugdrop)
 argument-hint: "[--direct] [--dry-run]"
 allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 ---
@@ -12,7 +12,10 @@ section first.
 
 Arguments: $ARGUMENTS. If they contain `--dry-run`, pass `--dry-run` to the final `export` call.
 
-Export saves the **list** of plugins (name, marketplace, source, version), never the plugins' files.
+Export saves the **list** of plugins (name, marketplace, source, version), never the plugins' files. It also
+saves your **personal** skills, commands and agents (the ones in the Claude config folder, not those that come
+with plugins): as copies of their files, or, for a skill cloned from a git repo, as a reference to that repo.
+Items that may contain a secret, or are too large, are not saved.
 
 ## Mode
 
@@ -22,7 +25,7 @@ questions at all.
 
 Direct mode: run `export --note "Direct export from <machine>"` (translate the note into the user's language,
 `<machine>` from `config`), with no `--category` (existing categories are kept). Then report as in step 6, adding
-one line per item of `warnings` and the counts by `portability`. Stop there.
+one line per item of `warnings`, the counts by `portability` and `personal_counts`. Stop there.
 
 ## Guided mode
 
@@ -31,6 +34,10 @@ one line per item of `warnings` and the counts by `portability`. Stop there.
    - **Exportable** (`portable`): name, marketplace, version.
    - **Not portable** (`local`): installed from a local folder, cannot be reinstalled elsewhere.
    - **Info only** (`non-user-scope`): project, session or claude.ai-synced plugins; recorded, not reinstallable.
+   Then the personal items from `personal` (ids look like `skill:name`, `command:name`, `agent:name`), with the
+   counts of `personal_counts`: **copied** (`files`), **from a git repo** (`git`, list them), **not saved**
+   (`excluded`, list each with its `reason`). Do not list every copied item when there are many: give the count
+   per kind and a few names.
    Show every item of `warnings` (for example credentials removed from a URL: say the token is NOT saved).
 3. If `uncategorized` is not empty, ask whether to assign categories, with three options:
    "Yes, suggest them", "Yes, one by one", "Skip".
@@ -46,7 +53,8 @@ one line per item of `warnings` and the counts by `portability`. Stop there.
    Ask every question of steps 3 and 4 on its own: never put the category approval and the note in the same
    prompt (combined with a preview, the user may be unable to answer either).
 4. Ask for a **note** for this snapshot. It is required: if the user gives an empty answer, ask again.
-5. Run `export --note "<note>"`, adding one `--category "<plugin@marketplace>=<category>"` per assigned category.
+5. Run `export --note "<note>"`, adding one `--category "<id>=<category>"` per assigned category (`<id>` is
+   `plugin@marketplace` or `skill:name`, `command:name`, `agent:name`).
    Escape any double quotes inside the note.
 6. Report: the snapshot file name, the counts, and the repo. If `pushed` is false, show `push_error` and `hint`.
    In dry-run, say clearly that nothing was written or pushed.

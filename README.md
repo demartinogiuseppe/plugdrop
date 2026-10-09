@@ -1,30 +1,43 @@
 # plugdrop
 
-A plugin for Claude Code that moves your **plugin list** between machines.
+A plugin for Claude Code that moves your **setup** between machines: your plugins and your personal skills,
+commands and agents.
 
-- **Export** saves the list of plugins installed on this machine as a new snapshot in a private GitHub repo
-  that plugdrop creates for you (`plugdrop-snapshots`).
-- **Import** shows a snapshot next to what is installed here and lets you install all of the missing plugins,
-  one category, a hand-picked set, or none.
+- **Export** saves what is on this machine as a new snapshot in a private GitHub repo that plugdrop creates for
+  you (`plugdrop-snapshots`).
+- **Import** shows a snapshot next to what is here and lets you install everything that is missing, one kind
+  (only skills, only plugins...), one category, a hand-picked set, or nothing.
 
-Every export is a new file with author, date, machine and a note. Snapshots are never overwritten.
+Every export is a new snapshot with author, date, machine and a note. Snapshots are never overwritten, and import
+never overwrites anything you already have.
 
 > plugdrop is an independent project. It is not affiliated with, endorsed or sponsored by Anthropic, PBC.
 > Claude and Claude Code are trademarks of Anthropic, PBC.
 
 ## What is saved (and what is not)
 
-A snapshot stores **references**, not plugins: for each plugin its name, marketplace, marketplace source
+**Plugins** are stored as **references**, not code: for each plugin its name, marketplace, marketplace source
 (for example `owner/repo`), version, scope and whether it was enabled. On import, every plugin is downloaded
 again from its original source through the official `claude plugin` CLI.
 
-Not saved, ever: plugin files, plugin settings or data, MCP server configs, local paths, credentials or tokens
-(credentials found in source URLs are removed and reported).
+**Personal skills, commands and agents** are the ones in your Claude config folder (`~/.claude/skills/<name>/`,
+`~/.claude/commands/`, `~/.claude/agents/`), not those that come with plugins.
+- A skill that is a clone of a git repo (it has a `.git` folder and an `origin` remote) is stored as a reference
+  to that repo and cloned again on import. Local changes you have not pushed are not carried over (export warns).
+- Everything else is copied into the snapshot repo, under `files/`, one file per content hash, so repeated
+  exports do not duplicate anything. `.git`, `node_modules`, `__pycache__` and virtualenv folders are left out.
+- An item is **not saved at all** if one of its files looks like a credential (`.env`, private keys, `*.pem`,
+  tokens such as `ghp_…`, `sk-…`, `AKIA…`), is larger than 1 MB, or the item is larger than 10 MB, or contains a
+  link. Export lists every item left out and why.
+
+Not saved, ever: plugin files, plugin settings or data, MCP server configs, `settings.json`, `CLAUDE.md`,
+credentials or tokens (credentials found in source URLs are removed and reported).
 
 Consequences:
 - The marketplace may ship a newer version than the one in the snapshot; the import report flags it.
-- If a plugin's source repo disappears, it can no longer be reinstalled.
-- Plugin options and saved data must be set up again on the new machine.
+- If a plugin's or a skill's source repo disappears, it can no longer be reinstalled.
+- Plugin options and saved data must be set up again on the new machine. A skill cloned from a repo that has
+  its own setup step needs that step run by hand.
 
 ## Requirements
 
@@ -49,15 +62,15 @@ Restart Claude Code afterwards.
 
 | Command | What it does |
 |---|---|
-| `/plugdrop:export` | Save your plugin list as a new snapshot. |
-| `/plugdrop:import` | Install plugins from a snapshot. |
+| `/plugdrop:export` | Save your plugins, skills, commands and agents as a new snapshot. |
+| `/plugdrop:import` | Install from a snapshot. |
 
 Each command first asks: **guided or direct?** Add `--direct` to skip the question.
 
-- **Guided**: summary, categories and a note on export; snapshot choice, selection (all, one category, item by
-  item, none) and a confirmation on import.
+- **Guided**: summary, categories and a note on export; snapshot choice, selection (all, one kind, one category,
+  item by item, none) and a confirmation on import.
 - **Direct**: no questions. Export keeps the existing categories and writes an automatic note. Import takes the most
-  recent snapshot and installs every missing plugin without asking.
+  recent snapshot and installs everything missing without asking.
 
 Both commands accept `--dry-run`: they show what would happen and change nothing.
 
@@ -66,8 +79,9 @@ private repo if needed, clones it into `~/.plugdrop/repo/` and saves `~/.plugdro
 
 ### Categories
 
-`categories.json` at the root of your snapshot repo maps `plugin@marketplace` to a category, for example
-`{"superpowers@claude-plugins-official": "method"}`. During export Claude offers to fill in missing ones, or to review the current ones when none is missing. You can
+`categories.json` at the root of your snapshot repo maps an item to a category, for example
+`{"superpowers@claude-plugins-official": "method", "skill:notes": "memory"}`. Items are `plugin@marketplace`,
+`skill:<name>`, `command:<name>` or `agent:<name>`. During export Claude offers to fill in missing ones, or to review the current ones when none is missing. You can
 edit the file by hand at any time. Import can install a single category.
 
 ### Plugin classes
@@ -77,6 +91,9 @@ edit the file by hand at any time. Import can install a single category.
 | `portable` | marketplace from GitHub, a git URL or a web URL | can be installed |
 | `local` | marketplace from a folder or file on the source machine | shown as not portable |
 | `non-user-scope` | project, local, session (`--plugin-dir`) or claude.ai-synced plugins | shown as info only |
+
+On import, a skill, command or agent that already exists here is shown as `installed` when its content is the
+same and `different` when it is not. A `different` item is never touched.
 
 ## When you don't need plugdrop
 
@@ -101,19 +118,25 @@ If you already keep your settings in dotfiles, that is faster than plugdrop. plu
 
 - Never overwrites or deletes a snapshot.
 - Never uninstalls or disables a plugin. A plugin that was disabled on the source machine is reported, not changed.
+- Never overwrites a skill, command or agent: it only creates the missing ones (each skill is built in a temporary
+  folder and moved into place in one step).
 - Never reads `.credentials.json`, `~/.claude.json` or other credential files, and never edits `settings.json`:
-  installs go through `claude plugin install` only.
+  plugin installs go through `claude plugin install` only.
+- Never copies a skill, command or agent that looks like it contains a secret.
 - The snapshot repo must be private: plugdrop refuses to use an existing public repo.
 - No telemetry. Network access happens only through `git`, `gh` and the `claude` CLI.
 
 ## Privacy
 
-Your snapshots contain the author and machine names you choose and the list of your plugins. They are stored only
-in your own private GitHub repo.
+Your snapshots contain the author and machine names you choose, the list of your plugins and the content of your
+personal skills, commands and agents. They are stored only in your own private GitHub repo.
 
-## Limits (v1)
+The secret check is a safety net, not a guarantee: it recognizes common token formats and credential file names,
+not every password written in plain text. Do not keep secrets inside skills.
 
-- Only plugins. Standalone skills, MCP servers, hooks, commands, agents, settings and `CLAUDE.md` are out of scope.
+## Limits
+
+- Out of scope: MCP servers, hooks, settings and `CLAUDE.md`.
 - No uninstall, no background sync.
 - Plugins whose install needs an interactive confirmation (marketplace-declared commands) fail with a clear error;
   install them by hand with `/plugin`.
@@ -133,6 +156,7 @@ Unit tests use fake data only. Manual end-to-end check:
 2. Export again on A with a different note: a second file appears, the first is unchanged.
 3. Import on machine B choosing a single category: only that category is installed.
 4. Import the same snapshot again: everything is "already installed", nothing happens.
+5. Change a personal skill on B and import again: it shows as "different" and stays as it is.
 
 ## License
 

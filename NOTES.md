@@ -104,6 +104,15 @@ Scoperte concrete che estendono la "pulizia di sicurezza" del brief:
 - Lo script **non apre mai** `.credentials.json`, `~/.claude.json`, `settings.json`.
 - Whitelist, non blacklist: lo snapshot contiene solo i campi elencati nello schema, costruiti uno per uno.
 
+### Skill, comandi e agent personali (0.4.0, decisione dell'utente 2026-10-09: "procedi con il punto 1")
+
+- Sorgenti: `<config>/skills/<nome>/SKILL.md`, `<config>/commands/**/*.md`, `<config>/agents/**/*.md`, dove `<config>` è `CLAUDE_CONFIG_DIR` o `~/.claude`. Cartelle senza `SKILL.md` (es. `synced/`, `learned/`, `.trash/`) ignorate: `synced` arriva già da claude.ai.
+- Skill con `.git` e remote `origin` remoto → riferimento `{url, commit}`, import con `git clone`. Sulla macchina di test erano 3, una delle quali da 1,3 GB con `node_modules`. Modifiche locali non pushate → warning.
+- Altri file → blob `files/<sha[:2]>/<sha>` nel repo snapshot (deduplicati). Esclusi `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`. Sulla macchina di test: 66 elementi, 274 file.
+- Item escluso per intero (salvato solo il nome) se: nome file da credenziale, token riconoscibile (`ghp_`, `github_pat_`, `sk-`, `xox?-`, `AKIA`, `AIza`, chiave privata PEM), file > 1 MB, item > 10 MB, link simbolico. Token con `EXAMPLE` ignorati: una skill reale citava la chiave d'esempio AWS `AKIAIOSFODNN7EXAMPLE` (falso positivo trovato nel test reale).
+- Import: crea solo ciò che manca. Esiste uguale → `installed`; esiste diverso → `different`, mai toccato. Le skill vengono costruite in una cartella di staging e rinominate in un colpo solo. Nomi e percorsi dallo snapshot validati (niente `..`, `\`, `:`), hash verificati prima di scrivere.
+- MCP (punto 2) **rimandato**: la CLI (`claude mcp list/get`) non ha uscita JSON, avvia ogni server e unisce gli argomenti con spazi; l'unica fonte affidabile è `~/.claude.json`, vietato dal brief. Verificato invece che `${VAR}` nella config utente viene espanso dalle variabili d'ambiente.
+
 ## 5. Parte legale ("legal safe")
 
 ### Marchio "Claude" / Anthropic
@@ -116,7 +125,8 @@ Scoperte concrete che estendono la "pulizia di sicurezza" del brief:
 
 ### Licenze di terzi
 
-- Lo snapshot contiene **solo riferimenti** (nome, marketplace, sorgente pubblica, versione), mai codice o file dei plugin. Nessuna redistribuzione → nessun obbligo verso le licenze dei plugin di terzi. L'installazione avviene dalla sorgente originale tramite la CLI ufficiale.
+- Per i **plugin** lo snapshot contiene **solo riferimenti** (nome, marketplace, sorgente pubblica, versione), mai codice o file. Nessuna redistribuzione → nessun obbligo verso le licenze dei plugin di terzi. L'installazione avviene dalla sorgente originale tramite la CLI ufficiale.
+- Dalla 0.4.0 le **skill/comandi/agent personali** vengono copiati, ma solo nel repo **privato** dell'utente e per suo uso: è una copia di backup personale, non una redistribuzione. Le skill che sono clone git restano riferimenti al repo originale. Il README dice che il repo deve restare privato e plugdrop rifiuta i repo pubblici.
 - Il plugin non ha dipendenze di terzi (solo stdlib Python): niente NOTICE da aggiungere.
 
 ### Privacy / dati personali
