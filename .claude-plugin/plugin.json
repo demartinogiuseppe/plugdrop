@@ -1,7 +1,7 @@
 {
   "name": "plugdrop",
   "displayName": "plugdrop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Export the list of your installed Claude Code plugins to a private GitHub repo and selectively reinstall it on another machine.",
   "author": {
     "name": "demartinogiuseppe",
