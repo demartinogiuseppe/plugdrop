@@ -28,8 +28,9 @@ plugdrop only installs plugins. It never uninstalls or disables anything.
    - item by item (let the user choose several)
    - none
 5. Run `import --snapshot "<file>" <choice> --dry-run`, where `<choice>` is `--all`, `--category "<name>"`,
-   `--ids "<id>,<id>"` or `--none`. Show the plan: what will be installed and which marketplaces will be added.
-   Ask for confirmation.
+   `--ids "<id>,<id>"` or `--none`. Ask for confirmation, putting the full plan (what will be installed and
+   which marketplaces will be added, as a table) **inside the question itself** (for example in the confirm
+   option's preview): text before a question may be collapsed and the user would not see the plan.
 6. If confirmed, run the same command without `--dry-run`.
 7. Final report:
    - installed (mention `version_changed` items: the marketplace now ships a different version than the snapshot)
