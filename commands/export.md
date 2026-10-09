@@ -16,6 +16,7 @@ Arguments: $ARGUMENTS. If they contain `--dry-run`, pass `--dry-run` to the fina
 Export saves the **list** of plugins (name, marketplace, source, version), never the plugins' files. It also
 saves your **personal** skills, commands and agents (the ones in the Claude config folder, not those that come
 with plugins): as copies of their files, or, for a skill cloned from a git repo, as a reference to that repo.
+It also saves a copy of the personal `CLAUDE.md` (id `claude-md:CLAUDE.md`), if there is one.
 Items that may contain a secret, or are too large, are not saved.
 
 ## Mode

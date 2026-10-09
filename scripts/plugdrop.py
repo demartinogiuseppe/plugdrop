@@ -172,8 +172,8 @@ def only_here(snapshot, here_ids):
 
 
 def select(plan, mode, categories=None, values=()):
-    """Pick the `to-install` items by mode: all | none | category | ids."""
-    todo = [item for item in plan if item["status"] == TO_INSTALL]
+    """Pick the `to-install` (and `to-merge`) items by mode: all | none | category | ids."""
+    todo = [item for item in plan if item["status"] in (TO_INSTALL, TO_MERGE)]
     if mode == "all":
         return todo
     if mode == "none":
@@ -366,7 +366,12 @@ SECRET_TEXT = re.compile(
     rb"|-----BEGIN [A-Z ]*PRIVATE KEY-----")
 BAD_PATH_CHARS = re.compile(r'[\\:*?"<>|\x00-\x1f]')
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-DIFFERENT = "different"
+DIFFERENT, TO_MERGE = "different", "to-merge"
+CLAUDE_MD = "CLAUDE.md"
+MARKER = re.compile(r"^\s*<!--\s*plugdrop:.*-->\s*$")
+FENCE = re.compile(r"^\s*(```|~~~)")
+MACHINE_PATH = re.compile(r"(?:\b[A-Za-z]:[\\/]|/Users/|/home/)[^\s`'\")]*")
+IMPORT_REF = re.compile(r"(?:^|\s)@((?:~/|\./|\.\./)?[\w./-]+\.md)\b", re.M)
 
 
 def claude_home():
@@ -454,10 +459,95 @@ def scan_personal(home, git_origin):
             files, excluded = _read_files(kind, name, [(rel.name, path)], blobs)
             items.append(excluded or {"id": f"{kind}:{name}", "kind": kind, "name": name, "source": "files",
                                       "files": files})
+    path = home / CLAUDE_MD
+    if path.is_file():
+        files, excluded = _read_files("claude-md", CLAUDE_MD, [(CLAUDE_MD, path)], blobs)
+        items.append(excluded or {"id": f"claude-md:{CLAUDE_MD}", "kind": "claude-md", "name": CLAUDE_MD,
+                                  "source": "files", "files": files})
     for item in items:
         if item["source"] == "excluded":
             warnings.append(f"Not exported: {item['id']} ({item['reason']}).")
     return items, blobs, warnings
+
+
+# CLAUDE.md is merged, not replaced: blocks of the snapshot's file that are missing here are appended at the end,
+# under a plugdrop marker comment, after a backup copy. Nothing already in the file is changed or removed.
+
+def split_blocks(text):
+    """Split markdown into blocks. A heading starts a block that runs to the next heading; before the first
+    heading every paragraph is a block. Headings inside code fences don't count; plugdrop markers are dropped."""
+    blocks, current, in_fence, headed = [], [], False, False
+
+    def flush():
+        if any(line.strip() for line in current):
+            blocks.append("\n".join(current).strip("\n"))
+        current.clear()
+
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if MARKER.match(line):
+            continue
+        if FENCE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("#"):
+            flush()
+            headed = True
+        elif not in_fence and not headed and not line.strip():
+            flush()
+            continue
+        current.append(line)
+    flush()
+    return blocks
+
+
+def _normalized(text):
+    lines = (line.strip() for line in text.replace("\r\n", "\n").split("\n"))
+    return "\n" + "\n".join(line for line in lines if line and not MARKER.match(line)) + "\n"
+
+
+def missing_blocks(snapshot_text, local_text):
+    """Blocks of the snapshot's CLAUDE.md whose lines do not already appear, in order, in the local one."""
+    local = _normalized(local_text)
+    return [b for b in split_blocks(snapshot_text) if _normalized(b) not in local]
+
+
+def block_notes(block, names):
+    """What a block depends on: plugin/skill names it mentions, machine paths, @-imported files."""
+    mentions = [n for n in sorted(names) if re.search(
+        rf"`{re.escape(n)}`|skills/{re.escape(n)}\b|(?<![\w/-]){re.escape(n)}:|(?<![\w/-])/{re.escape(n)}\b", block)]
+    return {"mentions": mentions, "machine_paths": MACHINE_PATH.findall(block), "imports": IMPORT_REF.findall(block)}
+
+
+def _backup_path(target, when):
+    base = f"{target.name}.plugdrop-backup-{when:%Y-%m-%d}"
+    path, n = target.with_name(base), 1
+    while path.exists():
+        n += 1
+        path = target.with_name(f"{base}-{n}")
+    return path
+
+
+def merge_claude_md(item, home, folder, machine, when, numbers=None):
+    """Append the chosen missing blocks (1-based `numbers`, all if empty). Returns (added, backup path)."""
+    target = target_path(home, item)
+    snapshot_text = _read_blob(folder, item["files"][0]["sha256"]).decode("utf-8")
+    raw = target.read_bytes()
+    local = raw.decode("utf-8")
+    missing = missing_blocks(snapshot_text, local)
+    chosen = [b for i, b in enumerate(missing, 1) if not numbers or i in numbers]
+    if not chosen:
+        return [], None
+    backup = _backup_path(target, when)
+    with open(backup, "xb") as f:
+        f.write(raw)
+    eol = "\r\n" if "\r\n" in local else "\n"
+    text = local.replace("\r\n", "\n")
+    text += ("" if text.endswith("\n") or not text else "\n") + \
+        f"\n<!-- plugdrop: added on {when:%Y-%m-%d} from {safe_part(machine or 'unknown')} -->\n" + \
+        "\n\n".join(chosen) + "\n"
+    tmp = target.with_name(f"{target.name}.plugdrop-tmp-{os.getpid()}")
+    tmp.write_bytes(text.replace("\n", eol).encode("utf-8"))
+    os.replace(tmp, target)
+    return [b.split("\n", 1)[0][:80] for b in chosen], str(backup)
 
 
 def _check_relative(text, what):
@@ -477,6 +567,10 @@ def target_path(home, item):
     if kind in ("command", "agent"):
         _check_relative(name, f"{kind} name")
         return home / f"{kind}s" / f"{name}.md"
+    if kind == "claude-md":
+        if name != CLAUDE_MD:
+            raise PlugdropError(f"Unsafe CLAUDE.md name in snapshot: {name!r}")
+        return home / CLAUDE_MD
     raise PlugdropError(f"Unknown item kind in snapshot: {kind!r}")
 
 
@@ -496,10 +590,15 @@ def _sha_of(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-def plan_personal(items, home):
-    """Status of each snapshot item on this machine: installed | to-install | different | not-portable."""
+def plan_personal(items, home, folder=None):
+    """Status of each snapshot item on this machine: installed | to-install | different | to-merge | not-portable.
+
+    A CLAUDE.md that differs is `to-merge` when the snapshot has blocks missing here (listed in `blocks`, which
+    needs `folder` to read the snapshot's copy), else `installed`.
+    """
     plan = []
     for item in items:
+        extra = {}
         if item.get("source") == "excluded":
             status = NOT_PORTABLE
         else:
@@ -508,10 +607,21 @@ def plan_personal(items, home):
                 status = TO_INSTALL
             elif item["source"] == "git":
                 status = INSTALLED if (target / ".git").exists() else DIFFERENT
+            elif all(_sha_of(path) == sha for path, sha in _file_targets(home, item)):
+                status = INSTALLED
+            elif item["kind"] == "claude-md" and folder is not None:
+                snapshot_text = _read_blob(folder, item["files"][0]["sha256"]).decode("utf-8")
+                local_text = target.read_text(encoding="utf-8")
+                missing = missing_blocks(snapshot_text, local_text)
+                snapshot_blocks = split_blocks(snapshot_text)
+                status = TO_MERGE if missing else INSTALLED
+                extra = {"blocks": [{"n": i, "title": b.split("\n", 1)[0][:80], "text": b}
+                                    for i, b in enumerate(missing, 1)],
+                         "already_present": len(snapshot_blocks) - len(missing),
+                         "local_only": len(missing_blocks(local_text, snapshot_text))}
             else:
-                same = all(_sha_of(path) == sha for path, sha in _file_targets(home, item))
-                status = INSTALLED if same else DIFFERENT
-        plan.append({**item, "status": status})
+                status = DIFFERENT
+        plan.append({**item, **extra, "status": status})
     return plan
 
 
@@ -571,15 +681,25 @@ def _write_files_item(item, home, folder):
             shutil.rmtree(staging)
 
 
-def install_personal(chosen, home, folder, clone, dry_run=False):
-    """Create each chosen item. clone(url, target) clones a git skill. One failure never stops the rest."""
+def install_personal(chosen, home, folder, clone, dry_run=False, machine=None, when=None, blocks=None):
+    """Create each chosen item, or merge a `to-merge` CLAUDE.md (`blocks`: 1-based numbers, all if empty).
+
+    clone(url, target) clones a git skill. One failure never stops the rest.
+    """
     report = []
     for item in chosen:
         row = {"id": item["id"], "kind": item["kind"], "source": item["source"]}
+        merge = item.get("status") == TO_MERGE
         if dry_run:
-            report.append({**row, "result": "would-install"})
+            report.append({**row, "result": "would-merge" if merge else "would-install"})
             continue
         try:
+            if merge:
+                added, backup = merge_claude_md(item, home, folder, machine,
+                                                when or dt.datetime.now().astimezone(), blocks)
+                report.append({**row, "result": "merged" if added else "unchanged", "added_blocks": added,
+                               "backup": backup})
+                continue
             if item["source"] == "git":
                 target = target_path(home, item)
                 if target.exists():
@@ -785,10 +905,17 @@ def _plan(folder, snapshot_name):
     snapshot = load_snapshot(folder, resolve_snapshot(folder, snapshot_name))
     plan = [{**item, "kind": "plugin"}
             for item in plan_statuses(snapshot.get("plugins", []), user_scope_ids(installed_plugins()))]
-    plan += plan_personal(snapshot.get("personal", []), claude_home())
+    plan += plan_personal(snapshot.get("personal", []), claude_home(), folder)
     categories = read_categories(folder)
     for item in plan:
         item["category"] = categories.get(item["id"])
+    # Flag CLAUDE.md blocks that mention a plugin or skill that is not installed here.
+    status_by_name = {i["name"]: i["status"] for i in plan if i["kind"] in ("plugin", "skill")}
+    for item in plan:
+        for block in item.get("blocks", []):
+            notes = block_notes(block["text"], status_by_name)
+            block["needs"] = [n for n in notes.pop("mentions") if status_by_name[n] != INSTALLED]
+            block.update(notes)
     return snapshot, plan, categories
 
 
@@ -796,12 +923,12 @@ def cmd_import_plan(args):
     folder = repo_dir(load_config())
     git(["pull", "--ff-only"], folder)
     snapshot, plan, _ = _plan(folder, args.snapshot)
-    todo = [i for i in plan if i["status"] == TO_INSTALL]
+    todo = [i for i in plan if i["status"] in (TO_INSTALL, TO_MERGE)]
     items = [{k: v for k, v in i.items() if k != "files"} for i in plan]
     result = {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "machine": snapshot.get("machine"),
               "note": snapshot.get("note"), "items": items,
               "counts": {s: sum(1 for i in plan if i["status"] == s)
-                         for s in (INSTALLED, TO_INSTALL, DIFFERENT, NOT_PORTABLE, INFO_ONLY)},
+                         for s in (INSTALLED, TO_INSTALL, TO_MERGE, DIFFERENT, NOT_PORTABLE, INFO_ONLY)},
               "categories_available": sorted({i["category"] for i in todo if i["category"]}),
               "kinds_available": sorted({i["kind"] for i in todo})}
     if args.diff:
@@ -813,7 +940,7 @@ def cmd_import_plan(args):
 
 def cmd_import(args):
     folder = repo_dir(load_config())
-    _, plan, categories = _plan(folder, args.snapshot)
+    snapshot, plan, categories = _plan(folder, args.snapshot)
     if args.all:
         chosen = select(plan, "all")
     elif args.category:
@@ -828,8 +955,9 @@ def cmd_import(args):
     chosen_plugins = [i for i in chosen if i["kind"] == "plugin"]
     marketplaces = {m.get("name") for m in known_marketplaces()} if chosen_plugins else set()
     report = install(chosen_plugins, marketplaces, claude, dry_run=args.dry_run)
+    blocks = {int(n) for n in (args.blocks or "").split(",") if n.strip()}
     report += install_personal([i for i in chosen if i["kind"] != "plugin"], claude_home(), folder, git_clone,
-                               dry_run=args.dry_run)
+                               dry_run=args.dry_run, machine=snapshot.get("machine"), blocks=blocks)
 
     installed_plugin_rows = [r for r in report if r["result"] == "installed" and "snapshot_version" in r]
     if not args.dry_run and installed_plugin_rows:
@@ -842,7 +970,7 @@ def cmd_import(args):
     return {"ok": True, "snapshot": resolve_snapshot(folder, args.snapshot), "dry_run": args.dry_run,
             "results": report,
             "already_installed": [i["id"] for i in plan if i["status"] == INSTALLED],
-            "skipped": [i["id"] for i in plan if i["status"] == TO_INSTALL and i["id"] not in chosen_ids],
+            "skipped": [i["id"] for i in plan if i["status"] in (TO_INSTALL, TO_MERGE) and i["id"] not in chosen_ids],
             "different": [i["id"] for i in plan if i["status"] == DIFFERENT],
             "not_portable": [i["id"] for i in plan if i["status"] == NOT_PORTABLE],
             "info_only": [i["id"] for i in plan if i["status"] == INFO_ONLY]}
@@ -881,9 +1009,10 @@ def build_parser():
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true")
     group.add_argument("--category", action="append", metavar="CATEGORY")
-    group.add_argument("--kind", action="append", choices=["plugin", "skill", "command", "agent"])
+    group.add_argument("--kind", action="append", choices=["plugin", "skill", "command", "agent", "claude-md"])
     group.add_argument("--ids", metavar="ID,ID,...")
     group.add_argument("--none", action="store_true")
+    p.add_argument("--blocks", metavar="N,N,...", help="CLAUDE.md merge: only these missing blocks (default all)")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_import)
     return parser
