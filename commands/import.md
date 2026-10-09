@@ -56,4 +56,5 @@ step 7, saying which snapshot was used (`snapshot`), and the reminder of step 8.
      the user can disable them with `/plugin` if they want
    - skills installed with `source: git` were cloned from their repo; if that repo has its own setup step (for
      example a `setup` script in its README), the user has to run it
-8. Remind the user to restart Claude Code to load the new plugins, skills, commands and agents.
+8. Remind the user to restart Claude Code to load the new plugins, skills, commands and agents, then add the
+   "MCP notice" of the shared instructions (also in direct mode).

@@ -17,6 +17,13 @@ that works for the rest of the session. If none works, tell the user that plugdr
 Every subcommand prints one JSON object. If it has `"ok": false`, show the `error` or `problems` to the user in
 plain words and stop.
 
+## MCP notice
+
+At the end of every export and import report (guided and direct), add this notice once, in the user's language:
+"MCP servers you added yourself (`claude mcp add`) are deliberately not exported or imported: they often contain
+private keys. MCP servers that come with a plugin are reinstalled together with the plugin. On the new machine,
+add your own again with `claude mcp add`."
+
 ## Setup (first run only)
 
 1. Run `config`. If `configured` is true, setup is done.
