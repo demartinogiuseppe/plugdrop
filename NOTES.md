@@ -82,7 +82,7 @@ Tipi di sorgente documentati: `github` (`repo`, `ref`, `path`), `git` (`url`, `r
 ## 2. Struttura plugin (doc ufficiale: plugins-reference, marketplace-reference)
 
 - `.claude-plugin/plugin.json`: unico campo obbligatorio `name` (kebab-case). Consigliati `version`, `description`, `author.name`, `license`.
-- `commands/*.md`: file Markdown piatti; i comandi sono **namespaced** `/<plugin>:<comando>` → `/plugdrop:export`, `/plugdrop:import`, e `/plugdrop:plugdrop` (il file `plugdrop.md`). La doc dice "Prefer `skills/` for new plugins", ma `commands/` è ancora supportato: teniamo `commands/` come da brief.
+- `commands/*.md`: file Markdown piatti; i comandi sono **namespaced** `/<plugin>:<comando>` → `/plugdrop:export`, `/plugdrop:import`. **Verificato (2026-10-09): la forma breve `/plugdrop` non esiste** (un file `plugdrop.md` diventa solo `/plugdrop:plugdrop`). Per questo, su decisione dell'utente, il comando d'ingresso `/plugdrop` del brief è stato tolto (v0.2.0): restano solo export e import. Le istruzioni comuni stanno in `scripts/shared-instructions.md`, che non è un comando. La doc dice "Prefer `skills/` for new plugins", ma `commands/` è ancora supportato: teniamo `commands/` come da brief.
 - `${CLAUDE_PLUGIN_ROOT}`: nel corpo Markdown dei comandi viene **sostituito inline** al caricamento (con `/` anche su Windows). Non è invece nell'ambiente dei comandi Bash → va scritto nel `.md`, es. `python "${CLAUDE_PLUGIN_ROOT}/scripts/plugdrop.py" ...`.
 - `.claude-plugin/marketplace.json`: obbligatori `name`, `owner.name`, `plugins[]`; ogni voce richiede `name` e `source`. Plugin alla radice del repo → `"source": "./"` (o `"."`).
 - Verifica finale: `claude plugin validate <dir>`.

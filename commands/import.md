@@ -7,7 +7,7 @@ allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
 # plugdrop import
 
 Talk to the user in their language. Run the script as described in the "Running the script" section of
-`${CLAUDE_PLUGIN_ROOT}/commands/plugdrop.md`. If `config` says plugdrop is not configured, do its "Setup"
+`${CLAUDE_PLUGIN_ROOT}/scripts/shared-instructions.md`. If `config` says plugdrop is not configured, do its "Setup"
 section first.
 
 Arguments: $ARGUMENTS. If they contain `--dry-run`, stop after showing the plan in step 5.

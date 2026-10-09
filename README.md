@@ -49,9 +49,8 @@ Restart Claude Code afterwards.
 
 | Command | What it does |
 |---|---|
-| `/plugdrop:plugdrop` | Asks: export or import? |
-| `/plugdrop:export` | Export directly. `--dry-run` shows what would be saved without writing anything. |
-| `/plugdrop:import` | Import directly. `--dry-run` stops after showing the plan. |
+| `/plugdrop:export` | Save your plugin list as a new snapshot. `--dry-run` shows what would be saved without writing anything. |
+| `/plugdrop:import` | Install plugins from a snapshot, choosing which ones. `--dry-run` stops after showing the plan. |
 
 On first run plugdrop checks `git`, `gh` and your GitHub login, asks for author, machine and repo name, creates the
 private repo if needed, clones it into `~/.plugdrop/repo/` and saves `~/.plugdrop/config.json`.

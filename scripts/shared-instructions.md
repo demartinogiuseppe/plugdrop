@@ -1,11 +1,6 @@
----
-description: Export or import your Claude Code plugin list (plugdrop)
-allowed-tools: Bash(python:*), Bash(py:*), Bash(python3:*)
----
+# plugdrop: shared instructions
 
-# plugdrop
-
-Talk to the user in their language. Keep messages short.
+Used by `commands/export.md` and `commands/import.md`. Talk to the user in their language. Keep messages short.
 
 ## Running the script
 
@@ -22,12 +17,7 @@ that works for the rest of the session. If none works, tell the user that plugdr
 Every subcommand prints one JSON object. If it has `"ok": false`, show the `error` or `problems` to the user in
 plain words and stop.
 
-## Step 1: export or import?
-
-Ask the user: **Export or import?** (two options). Then read and follow
-`${CLAUDE_PLUGIN_ROOT}/commands/export.md` or `${CLAUDE_PLUGIN_ROOT}/commands/import.md`.
-
-## Setup (first run only, used by export and import)
+## Setup (first run only)
 
 1. Run `config`. If `configured` is true, setup is done.
 2. Run `check`. If there are `problems`, explain each one with its fix and stop.
