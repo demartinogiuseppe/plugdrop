@@ -1,0 +1,15 @@
+{
+  "name": "plugdrop",
+  "owner": {
+    "name": "demartinogiuseppe",
+    "url": "https://github.com/demartinogiuseppe"
+  },
+  "description": "plugdrop: move your Claude Code plugin list between machines.",
+  "plugins": [
+    {
+      "name": "plugdrop",
+      "source": "./",
+      "description": "Export the list of your installed Claude Code plugins to a private GitHub repo and selectively reinstall it on another machine."
+    }
+  ]
+}
