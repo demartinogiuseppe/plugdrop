@@ -657,31 +657,54 @@ def blob_path(folder, sha):
     return folder / "files" / sha[:2] / sha
 
 
+GITATTRIBUTES = "# Written by plugdrop: keep every file byte for byte, never convert line endings.\n* -text\n"
+
+
+def ensure_gitattributes(folder):
+    """Make git store snapshot files unchanged whatever core.autocrlf says. True if the file was created."""
+    path = folder / ".gitattributes"
+    if path.exists():
+        return False
+    path.write_bytes(GITATTRIBUTES.encode("utf-8"))
+    return True
+
+
+def _sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
 def store_blobs(folder, blobs):
-    """Copy each blob into the snapshot repo once. Returns the repo-relative paths of new files."""
+    """Copy each blob into the snapshot repo once. Returns the repo-relative paths of new or repaired files.
+
+    A blob is named by its hash, so one whose content no longer matches (for example after a line-ending
+    conversion by git) is rewritten with the right bytes: that repairs it, it overwrites nothing of value.
+    """
     added = []
     for sha, source in sorted(blobs.items()):
         dest = blob_path(folder, sha)
-        if dest.exists():
+        if dest.is_file() and _sha(dest.read_bytes()) == sha:
             continue
         data = source.read_bytes()
-        if hashlib.sha256(data).hexdigest() != sha:
+        if _sha(data) != sha:
             raise PlugdropError(f"{source} changed during export; run the export again.")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with open(dest, "xb") as f:
-            f.write(data)
+        dest.write_bytes(data)
         added.append(dest.relative_to(folder).as_posix())
     return added
 
 
 def _read_blob(folder, sha):
+    """Read a blob and check it against its hash. If git converted its line endings (core.autocrlf), the
+    other line-ending form is accepted only when it matches the hash exactly."""
     path = blob_path(folder, sha)
     if not path.is_file():
         raise PlugdropError(f"Missing file {sha[:12]} in the snapshot repo.")
     data = path.read_bytes()
-    if hashlib.sha256(data).hexdigest() != sha:
-        raise PlugdropError(f"File {sha[:12]} in the snapshot repo is corrupted.")
-    return data
+    lf = data.replace(b"\r\n", b"\n")
+    for candidate in (data, lf, lf.replace(b"\n", b"\r\n")):
+        if _sha(candidate) == sha:
+            return candidate
+    raise PlugdropError(f"File {sha[:12]} in the snapshot repo is corrupted.")
 
 
 def _write_files_item(item, home, folder):
@@ -851,7 +874,7 @@ def cmd_setup(args):
             _check(run_tool("git", ["clone", repo, str(local)], timeout=1800))
     local.mkdir(exist_ok=True)
 
-    created = []
+    created = [".gitattributes"] if backend != "folder" and ensure_gitattributes(local) else []
     for rel, content in (("README.md", SNAPSHOT_REPO_README), ("categories.json", "{}\n"),
                          ("snapshots/.gitkeep", "")):
         path = local / rel
@@ -941,7 +964,15 @@ def cmd_export(args):
     if not uses_git(config):
         result["saved_to"] = str(folder)
         return result
+    # Repos made before plugdrop 0.7.1 have no .gitattributes, so git may have converted line endings of
+    # stored files. Add it, then re-stage every tracked file byte for byte from this machine's copy.
+    attributes_added = ensure_gitattributes(folder)
+    if attributes_added:
+        to_add.insert(0, ".gitattributes")
     git(["add", *to_add], folder)
+    if attributes_added:
+        git(["add", "--renormalize", "."], folder)
+        result["repaired_line_endings"] = True
     git(["commit", "-m", f"plugdrop: export {config['machine']} {now:%Y-%m-%d}"], folder)
     try:
         git(["push"], folder)

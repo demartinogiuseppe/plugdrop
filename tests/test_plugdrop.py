@@ -4,6 +4,7 @@ Run from the plugin root:  python -m unittest discover -s tests
 """
 import datetime as dt
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -397,6 +398,59 @@ class PersonalRoundTripTests(unittest.TestCase):
         report = pd.install_personal([item], self.dest, self.repo, clone=None)
         self.assertIn("corrupted", report[0]["error"])
         self.assertFalse((self.dest / "commands" / "hello.md").exists())
+
+
+class LineEndingTests(unittest.TestCase):
+    CRLF = b"line one\r\nline two\r\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put_blob(self, folder, sha, data):
+        path = pd.blob_path(folder, sha)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    def test_read_blob_undoes_line_ending_conversion_only_when_hash_matches(self):
+        crlf_sha, lf_sha = pd._sha(self.CRLF), pd._sha(self.CRLF.replace(b"\r\n", b"\n"))
+        self.put_blob(self.root, crlf_sha, self.CRLF.replace(b"\r\n", b"\n"))  # git stored it as LF
+        self.assertEqual(pd._read_blob(self.root, crlf_sha), self.CRLF)
+        self.put_blob(self.root, lf_sha, self.CRLF)  # git checked an LF file out as CRLF
+        self.assertEqual(pd._read_blob(self.root, lf_sha), self.CRLF.replace(b"\r\n", b"\n"))
+        self.put_blob(self.root, crlf_sha, b"line one\nline TWO\n")
+        with self.assertRaises(pd.PlugdropError):
+            pd._read_blob(self.root, crlf_sha)
+
+    def test_store_blobs_repairs_a_converted_blob(self):
+        source = self.root / "SKILL.md"
+        source.write_bytes(self.CRLF)
+        sha = pd._sha(self.CRLF)
+        self.put_blob(self.root / "repo", sha, self.CRLF.replace(b"\r\n", b"\n"))
+        self.assertEqual(len(pd.store_blobs(self.root / "repo", {sha: source})), 1)
+        self.assertEqual(pd.blob_path(self.root / "repo", sha).read_bytes(), self.CRLF)
+
+    @unittest.skipUnless(shutil.which("git"), "git not installed")
+    def test_git_keeps_bytes_with_autocrlf_true(self):
+        def run(*args, cwd):
+            subprocess.run(["git", "-c", "core.autocrlf=true", *args], cwd=cwd, check=True, capture_output=True)
+
+        origin, repo, clone = self.root / "origin.git", self.root / "repo", self.root / "clone"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True)
+        subprocess.run(["git", "clone", "-q", str(origin), str(repo)], check=True, capture_output=True)
+        self.assertTrue(pd.ensure_gitattributes(repo))
+        lf = b"unix\nfile\n"
+        for data in (self.CRLF, lf):
+            self.put_blob(repo, pd._sha(data), data)
+        run("add", ".", cwd=repo)
+        run("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "x", cwd=repo)
+        run("push", "-q", "origin", "HEAD", cwd=repo)
+        run("clone", "-q", str(origin), str(clone), cwd=self.root)
+        for data in (self.CRLF, lf):
+            self.assertEqual(pd.blob_path(clone, pd._sha(data)).read_bytes(), data)
 
 
 SNAPSHOT_CLAUDE_MD = """At the start of every session load the skill `example-plugin:example-guidelines`.
