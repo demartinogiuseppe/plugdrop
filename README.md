@@ -11,6 +11,9 @@ commands and agents, and your personal `CLAUDE.md`.
 Every export is a new snapshot with author, date, machine and a note. Snapshots are never overwritten, and import
 never overwrites anything you already have.
 
+> **Provided as is, without any warranty. Use it at your own risk: the author is not responsible for any damage
+> or improper use.** It is the tool I use myself to move my own setup. See [Disclaimer](#disclaimer).
+
 > plugdrop is an independent project. It is not affiliated with, endorsed or sponsored by Anthropic, PBC.
 > Claude and Claude Code are trademarks of Anthropic, PBC. GitHub, GitLab, Gitea, OneDrive, Dropbox and Google
 > Drive are trademarks of their respective owners and are named only to describe where you can keep your
@@ -79,7 +82,7 @@ Restart Claude Code afterwards.
 
 | Command | What it does |
 |---|---|
-| `/plugdrop:export` | Save your plugins, skills, commands and agents as a new snapshot. |
+| `/plugdrop:export` | Save your plugins, skills, commands, agents and `CLAUDE.md` as a new snapshot. |
 | `/plugdrop:import` | Install from a snapshot. |
 
 Each command first asks: **guided or direct?** Add `--direct` to skip the question.
@@ -110,8 +113,9 @@ With a synced folder, use the same folder on every machine and let the sync fini
 still get a new file each time and are never overwritten. A git URL must not contain a password: let git's
 credential manager or an SSH key handle the login.
 
-To use another snapshot repo later, add `--repo <name>` (or `--repo owner/name`) to either command. plugdrop
-clones the new repo next to the old one and switches to it; the old clone is kept. If a local clone turns out to
+To use another store later, add `--repo` to either command: a GitHub repo name or `owner/name`, a git URL, or a
+folder path (for example `--repo "C:\Users\me\OneDrive\plugdrop"`). plugdrop switches to it; the old copy is kept,
+never deleted. If a local clone turns out to
 belong to a different repo than the one you chose, plugdrop stops and tells you, instead of using it.
 
 ### Categories
@@ -145,9 +149,11 @@ Claude Code can already rebuild your plugins on a new machine by itself:
 
 If you already keep your settings in dotfiles, that is faster than plugdrop. plugdrop is for when you want:
 
-- to **choose** what to install (a category, a few plugins) instead of all or nothing;
-- to move **only the plugin list**, without the rest of `settings.json` (permissions, hooks, environment variables,
-  sometimes tokens), which is often machine-specific or sensitive;
+- to **choose** what to install (only skills, a category, a few plugins) instead of all or nothing;
+- to move **only what you pick** (plugins, personal skills, commands, agents, `CLAUDE.md`), without the rest of
+  `settings.json` (permissions, hooks, environment variables, sometimes tokens), which is often machine-specific
+  or sensitive;
+- **never to overwrite** what the new machine already has;
 - a **history** of snapshots with date, machine, author and note;
 - all this **without managing a git repo of your own** (or without git at all, with a synced folder).
 
@@ -162,6 +168,8 @@ If you already keep your settings in dotfiles, that is faster than plugdrop. plu
 - Never reads `.credentials.json`, `~/.claude.json` or other credential files, and never edits `settings.json`:
   plugin installs go through `claude plugin install` only.
 - Never copies a skill, command or agent that looks like it contains a secret.
+- Stores every copied file byte for byte (a `.gitattributes` stops git from converting line endings) and checks
+  its SHA-256 before writing it on import.
 - On GitHub the snapshot repo must be private: plugdrop refuses to use an existing public repo. On another git
   server or in a synced folder plugdrop cannot check this, and says so.
 - No telemetry. Network access happens only through `git`, `gh` and the `claude` CLI (a synced folder is moved by
@@ -216,6 +224,20 @@ Unit tests use fake data only. Manual end-to-end check:
 3. Import on machine B choosing a single category: only that category is installed.
 4. Import the same snapshot again: everything is "already installed", nothing happens.
 5. Change a personal skill on B and import again: it shows as "different" and stays as it is.
+
+## Disclaimer
+
+plugdrop is provided **"as is", without warranty of any kind**, express or implied, as stated in the MIT
+[LICENSE](LICENSE). I built it for myself, and it is the way I move my own Claude Code setup between my machines. I
+share it in case it is useful to you, not as a supported product.
+
+- **You use it at your own risk.** To the maximum extent permitted by law, the author is not liable for any damage
+  or loss arising from its use, including lost or altered files, configurations, data or credentials, nor for any
+  improper or unlawful use of the tool or of the content you store or install with it.
+- Before importing on a machine you care about, run `--diff` or `--dry-run` first and keep a backup of your own.
+- You are responsible for what you store in your snapshots, for complying with the licenses of the plugins and
+  skills you store and install, and with the terms of the services you use to keep your snapshots.
+- Nothing in this repository is legal advice.
 
 ## License
 
